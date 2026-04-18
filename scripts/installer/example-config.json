@@ -1,0 +1,10 @@
+{
+  "target_disk": "/dev/sda",
+  "mode": "dual_boot",
+  "hostname": "archbox",
+  "username": "alice",
+  "password": "SecurePass123!",
+  "timezone": "Europe/Berlin",
+  "locale": "en_US.UTF-8",
+  "keymap": "us"
+}
