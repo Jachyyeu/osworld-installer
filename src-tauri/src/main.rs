@@ -175,16 +175,16 @@ async fn detect_system_info() -> Result<SystemInfo> {
         .map(|cpu| cpu.brand().to_string())
         .unwrap_or_else(|| "Unknown CPU".to_string());
     
-    // Get disk free space (simplified - in production would use Windows APIs)
+    // Get disk free space using Windows GetDiskFreeSpaceExW
     let disk_free_space_gb = get_disk_free_space().unwrap_or(0);
     
-    // Detect Windows version
+    // Detect Windows version from Registry
     let windows_version = detect_windows_version().await?;
     
-    // Check Secure Boot status
+    // Check Secure Boot status from Registry
     let secure_boot_enabled = check_secure_boot().unwrap_or(false);
     
-    // Check BitLocker status
+    // Check BitLocker status via WMI
     let bitlocker_enabled = check_bitlocker().unwrap_or(false);
     
     Ok(SystemInfo {
@@ -200,21 +200,115 @@ async fn detect_system_info() -> Result<SystemInfo> {
 /// Get list of available disks
 #[tauri::command]
 fn get_available_disks() -> Result<Vec<DiskInfo>> {
-    // In production, this would use Windows WMI to get actual disk information
-    // For now, returning mock data
-    let disks = vec![
-        DiskInfo {
-            name: "Disk 0 (C:)".to_string(),
-            size_gb: 512,
-            free_space_gb: 200,
-        },
-        DiskInfo {
-            name: "Disk 1 (D:)".to_string(),
-            size_gb: 1024,
-            free_space_gb: 800,
-        },
-    ];
-    Ok(disks)
+    #[cfg(windows)]
+    {
+        use wmi::{COMLibrary, WMIConnection};
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Debug)]
+        struct Win32DiskDrive {
+            #[serde(rename = "Model")]
+            model: String,
+            #[serde(rename = "Size")]
+            size: Option<i64>,
+            #[serde(rename = "Index")]
+            index: u32,
+            #[serde(rename = "MediaType")]
+            media_type: Option<String>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Win32LogicalDisk {
+            #[serde(rename = "DeviceID")]
+            device_id: String,
+            #[serde(rename = "Size")]
+            size: Option<i64>,
+            #[serde(rename = "FreeSpace")]
+            free_space: Option<i64>,
+            #[serde(rename = "DriveType")]
+            drive_type: u32,
+            #[serde(rename = "VolumeName")]
+            volume_name: Option<String>,
+        }
+
+        let com = COMLibrary::new().map_err(|e| {
+            InstallerError::SystemCheckFailed(format!("COM init failed: {}", e))
+        })?;
+
+        let wmi = WMIConnection::new(com).map_err(|e| {
+            InstallerError::SystemCheckFailed(format!("WMI connection failed: {}", e))
+        })?;
+
+        let disk_drives: Vec<Win32DiskDrive> = wmi
+            .raw_query("SELECT * FROM Win32_DiskDrive")
+            .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
+
+        let logical_disks: Vec<Win32LogicalDisk> = wmi
+            .raw_query("SELECT * FROM Win32_LogicalDisk WHERE DriveType=3")
+            .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
+
+        let mut disks = Vec::new();
+
+        // Present logical fixed disks (DriveType=3) — these are what users select
+        for ld in logical_disks {
+            if ld.drive_type != 3 {
+                continue;
+            }
+
+            let size_gb = ld.size.map(|s| (s as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
+            let free_gb = ld.free_space.map(|f| (f as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
+
+            let name = match &ld.volume_name {
+                Some(vol) if !vol.is_empty() => {
+                    format!("{} ({}:)", ld.device_id.trim_end_matches(':'), vol)
+                }
+                _ => ld.device_id.clone(),
+            };
+
+            disks.push(DiskInfo {
+                name,
+                size_gb,
+                free_space_gb: free_gb,
+            });
+        }
+
+        // Fallback to physical disks if no logical fixed disks were found
+        if disks.is_empty() {
+            for drive in disk_drives {
+                let is_fixed = drive.media_type.as_deref()
+                    .map(|m| m.contains("Fixed"))
+                    .unwrap_or(false);
+
+                if !is_fixed {
+                    continue;
+                }
+
+                let size_gb = drive.size.map(|s| (s as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
+                disks.push(DiskInfo {
+                    name: format!("Disk {} ({})", drive.index, drive.model.trim()),
+                    size_gb,
+                    free_space_gb: 0,
+                });
+            }
+        }
+
+        Ok(disks)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(vec![
+            DiskInfo {
+                name: "Disk 0 (C:)".to_string(),
+                size_gb: 512,
+                free_space_gb: 200,
+            },
+            DiskInfo {
+                name: "Disk 1 (D:)".to_string(),
+                size_gb: 1024,
+                free_space_gb: 800,
+            },
+        ])
+    }
 }
 
 /// Set disk selection and Linux partition size
@@ -341,25 +435,232 @@ fn calculate_estimated_time(linux_size_gb: u64) -> Result<String> {
 
 // ==================== Helper Functions ====================
 
+#[cfg(windows)]
+fn to_wide(s: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
+}
+
+#[cfg(windows)]
+fn reg_query_string(hkey: isize, subkey: &str, value: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{
+        RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
+    };
+
+    let subkey_wide = to_wide(subkey);
+    let value_wide = to_wide(value);
+    let mut h: isize = 0;
+
+    let status = unsafe {
+        RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
+    };
+
+    if status != 0 {
+        return None;
+    }
+
+    let mut buf_size: u32 = 0;
+
+    unsafe {
+        RegQueryValueExW(
+            h,
+            value_wide.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut buf_size,
+        );
+    }
+
+    if buf_size == 0 || buf_size > 4096 {
+        unsafe { RegCloseKey(h) };
+        return None;
+    }
+
+    let mut buf = vec![0u8; buf_size as usize];
+    let status = unsafe {
+        RegQueryValueExW(
+            h,
+            value_wide.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr(),
+            &mut buf_size,
+        )
+    };
+
+    unsafe { RegCloseKey(h) };
+
+    if status != 0 {
+        return None;
+    }
+
+    let u16_slice = unsafe {
+        std::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+    };
+
+    let u16_vec: Vec<u16> = u16_slice.iter().copied().take_while(|&c| c != 0).collect();
+    String::from_utf16(&u16_vec).ok()
+}
+
+#[cfg(windows)]
+fn reg_query_dword(hkey: isize, subkey: &str, value: &str) -> Option<u32> {
+    use windows_sys::Win32::System::Registry::{
+        RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
+    };
+
+    let subkey_wide = to_wide(subkey);
+    let value_wide = to_wide(value);
+    let mut h: isize = 0;
+
+    let status = unsafe {
+        RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
+    };
+
+    if status != 0 {
+        return None;
+    }
+
+    let mut data: u32 = 0;
+    let mut data_size: u32 = std::mem::size_of::<u32>() as u32;
+    let mut data_type: u32 = 0;
+
+    let status = unsafe {
+        RegQueryValueExW(
+            h,
+            value_wide.as_ptr(),
+            std::ptr::null_mut(),
+            &mut data_type,
+            &mut data as *mut u32 as *mut u8,
+            &mut data_size,
+        )
+    };
+
+    unsafe { RegCloseKey(h) };
+
+    if status != 0 || data_type != 4 {
+        // 4 = REG_DWORD
+        return None;
+    }
+
+    Some(data)
+}
+
 async fn detect_windows_version() -> Result<String> {
-    // In production, this would read from Windows Registry
-    // For now, return a mock version
-    Ok("Windows 11 Pro (23H2)".to_string())
+    #[cfg(windows)]
+    {
+        let product_name = reg_query_string(
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            "ProductName",
+        )
+        .unwrap_or_else(|| "Windows".to_string());
+
+        let display_version = reg_query_string(
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            "DisplayVersion",
+        );
+
+        let release_id = reg_query_string(
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            "ReleaseId",
+        );
+
+        let version = match (display_version, release_id) {
+            (Some(dv), _) => format!("{} ({})", product_name.trim(), dv.trim()),
+            (None, Some(ri)) => format!("{} ({})", product_name.trim(), ri.trim()),
+            _ => product_name.trim().to_string(),
+        };
+
+        Ok(version)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok("Windows 11 Pro (23H2)".to_string())
+    }
 }
 
 fn get_disk_free_space() -> Option<u64> {
-    // In production, this would use GetDiskFreeSpaceExW
-    Some(250)
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::ULARGE_INTEGER;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+        let path = to_wide("C:\\");
+        let mut free_bytes: ULARGE_INTEGER = unsafe { std::mem::zeroed() };
+
+        let result = unsafe {
+            GetDiskFreeSpaceExW(
+                path.as_ptr(),
+                &mut free_bytes,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if result == 0 {
+            return None;
+        }
+
+        let bytes = unsafe { free_bytes.QuadPart };
+        Some(bytes / (1024 * 1024 * 1024))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(250)
+    }
 }
 
 fn check_secure_boot() -> Option<bool> {
-    // In production, this would check UEFI Secure Boot variable
-    Some(true)
+    #[cfg(windows)]
+    {
+        let val = reg_query_dword(
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\SecureBoot\State",
+            "UEFISecureBootEnabled",
+        );
+        Some(val.unwrap_or(0) != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        Some(false)
+    }
 }
 
 fn check_bitlocker() -> Option<bool> {
-    // In production, this would query BitLocker status via WMI
-    Some(false)
+    #[cfg(windows)]
+    {
+        use wmi::{COMLibrary, WMIConnection};
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Debug)]
+        struct Win32EncryptableVolume {
+            #[serde(rename = "DriveLetter")]
+            _drive_letter: String,
+            #[serde(rename = "ProtectionStatus")]
+            protection_status: u32,
+        }
+
+        let com = COMLibrary::new().ok()?;
+        let wmi = WMIConnection::new(com).ok()?;
+
+        let volumes: Vec<Win32EncryptableVolume> = wmi
+            .raw_query("SELECT * FROM Win32_EncryptableVolume WHERE DriveLetter='C:'")
+            .ok()?;
+
+        if volumes.is_empty() {
+            return Some(false);
+        }
+
+        // 0 = Unprotected, 1 = Protected, 2 = Unknown
+        Some(volumes[0].protection_status == 1)
+    }
+    #[cfg(not(windows))]
+    {
+        Some(false)
+    }
 }
 
 // ==================== Main Function ====================
