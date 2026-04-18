@@ -7,10 +7,19 @@ import {
   X,
   AlertTriangle,
   RotateCcw,
-  Check
+  Check,
+  Power
 } from 'lucide-react';
-import { startInstallation, cancelInstallation, onInstallProgress } from '../lib/tauri';
-import type { InstallProgress } from '../types';
+import { 
+  prepareStaging, 
+  downloadAndStageIso, 
+  installRefind, 
+  rebootToInstaller,
+  onDownloadProgress,
+  getConfig,
+  cancelInstallation
+} from '../lib/tauri';
+import type { StagingInfo } from '../types';
 
 interface InstallStep {
   id: string;
@@ -20,10 +29,10 @@ interface InstallStep {
 }
 
 const INSTALL_STEPS: InstallStep[] = [
+  { id: 'prepare', name: 'Preparing Disk Space...', icon: <HardDrive className="w-5 h-5" />, status: 'pending' },
   { id: 'download', name: 'Downloading OS...', icon: <Download className="w-5 h-5" />, status: 'pending' },
-  { id: 'prepare', name: 'Preparing Disk...', icon: <HardDrive className="w-5 h-5" />, status: 'pending' },
-  { id: 'install', name: 'Installing System...', icon: <Cog className="w-5 h-5" />, status: 'pending' },
-  { id: 'finalize', name: 'Finalizing...', icon: <CheckCircle className="w-5 h-5" />, status: 'pending' },
+  { id: 'bootloader', name: 'Setting Up Bootloader...', icon: <Cog className="w-5 h-5" />, status: 'pending' },
+  { id: 'reboot', name: 'Ready to Reboot', icon: <CheckCircle className="w-5 h-5" />, status: 'pending' },
 ];
 
 export default function InstallationProgressWindow() {
@@ -34,11 +43,12 @@ export default function InstallationProgressWindow() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadPercent, setDownloadPercent] = useState(0);
   const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    startListening();
-    startInstall();
+    runInstallationStages();
+    setupDownloadListener();
 
     return () => {
       if (unlistenRef.current) {
@@ -47,45 +57,72 @@ export default function InstallationProgressWindow() {
     };
   }, []);
 
-  const startListening = async () => {
+  const setupDownloadListener = async () => {
     try {
-      const unlisten = await onInstallProgress((progress) => {
-        updateProgress(progress);
+      const unlisten = await onDownloadProgress((progress) => {
+        setDownloadPercent(progress.percent);
+        setOverallProgress(25 + Math.floor(progress.percent * 0.4));
       });
       unlistenRef.current = unlisten;
     } catch (err) {
-      console.error('Failed to listen to progress:', err);
+      console.error('Failed to listen to download progress:', err);
     }
   };
 
-  const startInstall = async () => {
+  const runInstallationStages = async () => {
     try {
-      await startInstallation();
+      const config = await getConfig();
+      
+      if (!config.linux_size_gb) {
+        throw new Error('Linux partition size not configured');
+      }
+
+      // Stage 1: Prepare staging
+      updateStepStatus('prepare', 'in-progress');
+      setCurrentStepName('Preparing disk space...');
+      setOverallProgress(5);
+      
+      const stagingInfo: StagingInfo = await prepareStaging(config, 'OSWORLD');
+      
+      updateStepStatus('prepare', 'completed');
+      
+      // Stage 2: Download ISO
+      updateStepStatus('download', 'in-progress');
+      setCurrentStepName('Downloading Arch Linux ISO...');
+      setOverallProgress(25);
+      
+      await downloadAndStageIso(stagingInfo.boot_partition_letter, config);
+      
+      updateStepStatus('download', 'completed');
+      
+      // Stage 3: Install rEFInd
+      updateStepStatus('bootloader', 'in-progress');
+      setCurrentStepName('Setting up bootloader...');
+      setOverallProgress(75);
+      
+      await installRefind();
+      
+      updateStepStatus('bootloader', 'completed');
+      updateStepStatus('reboot', 'completed');
+      setOverallProgress(100);
       setIsCompleted(true);
       setIsInstalling(false);
-      setCurrentStepName('Installation completed successfully!');
-      setOverallProgress(100);
-      
-      // Mark all steps as completed
-      setSteps(prev => prev.map(step => ({ ...step, status: 'completed' })));
+      setCurrentStepName('Ready to reboot into OSWorld Installer');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Installation failed');
       setIsInstalling(false);
+      
+      // Mark current step as error
+      setSteps(prev => prev.map(step => 
+        step.status === 'in-progress' ? { ...step, status: 'error' } : step
+      ));
     }
   };
 
-  const updateProgress = (progress: InstallProgress) => {
-    setOverallProgress(progress.progress_percent);
-    setCurrentStepName(progress.step);
-    
-    setSteps(prev => prev.map((step, index) => {
-      if (index < progress.current_step_index) {
-        return { ...step, status: 'completed' };
-      } else if (index === progress.current_step_index) {
-        return { ...step, status: 'in-progress' };
-      }
-      return { ...step, status: 'pending' };
-    }));
+  const updateStepStatus = (stepId: string, status: InstallStep['status']) => {
+    setSteps(prev => prev.map(step => 
+      step.id === stepId ? { ...step, status } : step
+    ));
   };
 
   const handleCancel = async () => {
@@ -100,13 +137,15 @@ export default function InstallationProgressWindow() {
   };
 
   const handleRestart = () => {
-    // In production, this would restart the application
     window.location.reload();
   };
 
-  const handleFinish = () => {
-    // In production, this would close the installer and reboot
-    alert('System will now reboot to complete the installation.');
+  const handleReboot = async () => {
+    try {
+      await rebootToInstaller();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to initiate reboot');
+    }
   };
 
   if (showCancelDialog) {
@@ -151,11 +190,11 @@ export default function InstallationProgressWindow() {
       {/* Header */}
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-bold text-slate-800">
-          {isCompleted ? 'Installation Complete!' : 'Installing OSWorld'}
+          {isCompleted ? 'Ready to Reboot' : 'Installing OSWorld'}
         </h2>
         <p className="text-slate-600">
           {isCompleted 
-            ? 'Your system is ready. Please restart to complete the setup.'
+            ? 'All files are staged. Reboot to start the OSWorld Installer.'
             : 'Please do not turn off your computer during installation.'
           }
         </p>
@@ -195,6 +234,22 @@ export default function InstallationProgressWindow() {
               />
             </div>
             
+            {/* Download sub-progress */}
+            {steps[1]?.status === 'in-progress' && downloadPercent > 0 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-slate-500">ISO Download</span>
+                  <span className="text-sm font-medium text-slate-600">{downloadPercent}%</span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                    style={{ width: `${downloadPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
             {/* Current Step */}
             <div className="mt-4 flex items-center gap-3">
               {!isCompleted && isInstalling && (
@@ -210,7 +265,7 @@ export default function InstallationProgressWindow() {
 
           {/* Steps List */}
           <div className="space-y-3">
-            {steps.map((step, index) => (
+            {steps.map((step) => (
               <div 
                 key={step.id}
                 className={`
@@ -219,7 +274,9 @@ export default function InstallationProgressWindow() {
                     ? 'bg-green-50 border-green-200' 
                     : step.status === 'in-progress'
                       ? 'bg-primary-50 border-primary-200'
-                      : 'bg-slate-50 border-slate-100'
+                      : step.status === 'error'
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-slate-50 border-slate-100'
                   }
                 `}
               >
@@ -229,11 +286,15 @@ export default function InstallationProgressWindow() {
                     ? 'bg-green-500 text-white' 
                     : step.status === 'in-progress'
                       ? 'bg-primary-500 text-white'
-                      : 'bg-slate-200 text-slate-400'
+                      : step.status === 'error'
+                        ? 'bg-red-500 text-white'
+                        : 'bg-slate-200 text-slate-400'
                   }
                 `}>
                   {step.status === 'completed' ? (
                     <Check className="w-5 h-5" />
+                  ) : step.status === 'error' ? (
+                    <AlertTriangle className="w-5 h-5" />
                   ) : (
                     step.icon
                   )}
@@ -246,7 +307,9 @@ export default function InstallationProgressWindow() {
                       ? 'text-green-800' 
                       : step.status === 'in-progress'
                         ? 'text-primary-800'
-                        : 'text-slate-500'
+                        : step.status === 'error'
+                          ? 'text-red-800'
+                          : 'text-slate-500'
                     }
                   `}>
                     {step.name}
@@ -262,6 +325,9 @@ export default function InstallationProgressWindow() {
                   )}
                   {step.status === 'completed' && (
                     <CheckCircle className="w-5 h-5 text-green-500" />
+                  )}
+                  {step.status === 'error' && (
+                    <AlertTriangle className="w-5 h-5 text-red-500" />
                   )}
                   {step.status === 'pending' && (
                     <div className="w-5 h-5 rounded-full border-2 border-slate-300" />
@@ -299,12 +365,12 @@ export default function InstallationProgressWindow() {
 
         {isCompleted && (
           <button
-            onClick={handleFinish}
+            onClick={handleReboot}
             className="flex items-center gap-2 px-8 py-3 rounded-lg font-semibold text-white
               bg-green-600 hover:bg-green-700 shadow-lg hover:shadow-xl transition-all"
           >
-            <Check className="w-5 h-5" />
-            <span>Finish & Reboot</span>
+            <Power className="w-5 h-5" />
+            <span>Reboot to Installer</span>
           </button>
         )}
       </div>
@@ -320,8 +386,8 @@ export default function InstallationProgressWindow() {
               <h4 className="font-semibold text-blue-800 mb-1">Installation Tips</h4>
               <ul className="text-sm text-blue-700 space-y-1">
                 <li>• Keep your computer plugged in during installation</li>
-                <li>• The installation may take 15-30 minutes depending on your system</li>
-                <li>• Your computer will restart automatically when complete</li>
+                <li>• The staging process may take 10-20 minutes depending on your connection</li>
+                <li>• Your computer will restart into the OSWorld Installer when ready</li>
               </ul>
             </div>
           </div>

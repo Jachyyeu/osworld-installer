@@ -42,6 +42,23 @@ export interface InstallProgress {
   total_steps: number;
 }
 
+export interface StagingInfo {
+  boot_partition_letter: string;
+  linux_partition_number: number;
+}
+
+export interface DownloadProgress {
+  percent: number;
+  stage: string;
+  bytes_downloaded: number;
+  total_bytes: number;
+}
+
+export interface DownloadProgressEvent {
+  percent: number;
+  stage: string;
+}
+
 export interface EditionInfo {
   id: Edition;
   name: string;

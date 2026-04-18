@@ -1,7 +1,7 @@
 // Tauri API helper functions
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, Edition } from '../types';
+import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, Edition, StagingInfo, DownloadProgress, DownloadProgressEvent } from '../types';
 
 // Invoke commands with proper typing
 export async function setInstallType(installType: InstallType): Promise<void> {
@@ -58,9 +58,32 @@ export async function calculateEstimatedTime(linuxSizeGb: number): Promise<strin
   return invoke('calculate_estimated_time', { linuxSizeGb });
 }
 
+// Staging commands
+export async function prepareStaging(config: InstallConfig, confirmation: string): Promise<StagingInfo> {
+  return invoke('prepare_staging', { config, confirmation });
+}
+
+export async function downloadAndStageIso(targetDriveLetter: string, config: InstallConfig): Promise<DownloadProgress> {
+  return invoke('download_and_stage_iso', { targetDriveLetter, config });
+}
+
+export async function installRefind(): Promise<void> {
+  return invoke('install_refind');
+}
+
+export async function rebootToInstaller(): Promise<void> {
+  return invoke('reboot_to_installer');
+}
+
 // Event listeners
 export function onInstallProgress(callback: (progress: InstallProgress) => void) {
   return listen<InstallProgress>('install-progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+export function onDownloadProgress(callback: (progress: DownloadProgressEvent) => void) {
+  return listen<DownloadProgressEvent>('download-progress', (event) => {
     callback(event.payload);
   });
 }
