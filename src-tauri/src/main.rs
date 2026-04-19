@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Manager, State, Emitter, AppHandle};
 use thiserror::Error;
+use std::ffi::c_void;
 
 // Configuration struct that can be serialized to JSON for the next stage
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
