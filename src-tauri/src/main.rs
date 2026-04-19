@@ -333,7 +333,7 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
                     let free_gb = (free_bytes / (1024*1024*1024)) as u64;
 
                     disks.push(DiskInfo {
-                        name: format("{} Drive", name),
+                        name: format!("{} Drive", name),
                         size_gb: total_gb,           // NOT total_size
                         free_space_gb: free_gb,      // NOT free_space
                     });
