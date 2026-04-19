@@ -303,24 +303,51 @@ fn get_available_disks_wmi() -> Result<Vec<DiskInfo>> {
 
 #[cfg(windows)]
 fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
-    eprintln!("[get_available_disks] Running wmic fallback");
+    println!("[get_available_disks] Starting");
 
-    let output = std::process::Command::new("wmic")
-        .args(&["logicaldisk", "get", "DeviceID,Size,FreeSpace,DriveType", "/format:csv"])
-        .output()
-        .map_err(|e| InstallerError::SystemCheckFailed(format!("wmic command failed: {}", e)))?;
+    // Use wmic command - no COM needed, works in VMs
+    let output = std::process::Command::new("cmd")
+    .args(&["/c", "wmic logicaldisk get DeviceID,Size,FreeSpace,DriveType /format:csv"])
+    .output()
+    .map_err(|e| format!("wmic failed: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    eprintln!("DEBUG: Raw wmic output: {}", stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    println!("[get_available_disks] wmic output: {}", stdout);
 
-    if !output.status.success() {
-        eprintln!("DEBUG: wmic command failed with status: {:?}", output.status);
-        eprintln!("DEBUG: wmic stderr: {}", stderr);
-        eprintln!("DEBUG: wmic stdout was: {}", stdout);
-        return Err(InstallerError::SystemCheckFailed(
-            format!("wmic failed: {}", stderr)
-        ));
+    let mut disks = Vec::new();
+
+    // Parse CSV lines
+    for line in stdout.lines().skip(1) { // skip header
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 5 {
+            let name = parts[1].trim();
+            let size = parts[2].trim();
+            let free = parts[3].trim();
+            let dtype = parts[4].trim();
+
+            // Only fixed drives (type 3) with valid data
+            if dtype == "3" && !size.is_empty() && size != "Size" {
+                if let (Ok(total_bytes), Ok(free_bytes)) = (size.parse::<u64>(), free.parse::<u64>()) {
+                    let total_gb = (total_bytes / (1024*1024*1024)) as i64;
+                    let free_gb = (free_bytes / (1024*1024*1024)) as i64;
+
+                    disks.push(DiskInfo {
+                        name: format!("{} ({} GB total, {} GB free)", name, total_gb, free_gb),
+                               total_size: total_gb,
+                               free_space: free_gb,
+                               is_removable: false,
+                    });
+                    println!("[get_available_disks] Found disk: {} {}GB total {}GB free", name, total_gb, free_gb);
+                }
+            }
+        }
+    }
+
+    if disks.is_empty() {
+        return Err("No disks found".to_string());
+    }
+
+    Ok(disks)
     }
 
     eprintln!("[get_available_disks] wmic output:\n{}", stdout);
