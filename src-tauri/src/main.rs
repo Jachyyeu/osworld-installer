@@ -707,14 +707,14 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-fn reg_query_string(hkey: isize, subkey: &str, value: &str) -> Option<String> {
+fn reg_query_string(hkey: *mut c_void, subkey: &str, value: &str) -> Option<String> {
     use windows_sys::Win32::System::Registry::{
         RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
     };
 
     let subkey_wide = to_wide(subkey);
     let value_wide = to_wide(value);
-    let mut h: isize = 0;
+    let mut h: *mut c_void = std::ptr::null_mut();
 
     let status = unsafe {
         RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
@@ -769,14 +769,14 @@ fn reg_query_string(hkey: isize, subkey: &str, value: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn reg_query_dword(hkey: isize, subkey: &str, value: &str) -> Option<u32> {
+fn reg_query_dword(hkey: *mut c_void, subkey: &str, value: &str) -> Option<u32> {
     use windows_sys::Win32::System::Registry::{
         RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
     };
 
     let subkey_wide = to_wide(subkey);
     let value_wide = to_wide(value);
-    let mut h: isize = 0;
+    let mut h: *mut c_void = std::ptr::null_mut();
 
     let status = unsafe {
         RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
@@ -815,20 +815,20 @@ async fn detect_windows_version() -> Result<String> {
     #[cfg(windows)]
     {
         let product_name = reg_query_string(
-            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE as *mut c_void,
             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
             "ProductName",
         )
         .unwrap_or_else(|| "Windows".to_string());
 
         let display_version = reg_query_string(
-            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE as *mut c_void,
             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
             "DisplayVersion",
         );
 
         let release_id = reg_query_string(
-            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE as *mut c_void,
             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
             "ReleaseId",
         );
@@ -850,11 +850,10 @@ async fn detect_windows_version() -> Result<String> {
 fn get_disk_free_space() -> Option<u64> {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::ULARGE_INTEGER;
         use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 
         let path = to_wide("C:\\");
-        let mut free_bytes: ULARGE_INTEGER = unsafe { std::mem::zeroed() };
+        let mut free_bytes: u64 = 0;
 
         let result = unsafe {
             GetDiskFreeSpaceExW(
@@ -869,8 +868,7 @@ fn get_disk_free_space() -> Option<u64> {
             return None;
         }
 
-        let bytes = unsafe { free_bytes.QuadPart };
-        Some(bytes / (1024 * 1024 * 1024))
+        Some(free_bytes / (1024 * 1024 * 1024))
     }
     #[cfg(not(windows))]
     {
@@ -882,7 +880,7 @@ fn check_secure_boot() -> Option<bool> {
     #[cfg(windows)]
     {
         let val = reg_query_dword(
-            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE as *mut c_void,
             r"SYSTEM\CurrentControlSet\Control\SecureBoot\State",
             "UEFISecureBootEnabled",
         );
