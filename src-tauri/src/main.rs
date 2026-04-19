@@ -311,9 +311,13 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
         .map_err(|e| InstallerError::SystemCheckFailed(format!("wmic command failed: {}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!("DEBUG: Raw wmic output: {}", stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() {
+        eprintln!("DEBUG: wmic command failed with status: {:?}", output.status);
+        eprintln!("DEBUG: wmic stderr: {}", stderr);
+        eprintln!("DEBUG: wmic stdout was: {}", stdout);
         return Err(InstallerError::SystemCheckFailed(
             format!("wmic failed: {}", stderr)
         ));
