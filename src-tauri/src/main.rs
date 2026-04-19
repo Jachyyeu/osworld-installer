@@ -352,54 +352,6 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
 
     eprintln!("[get_available_disks] wmic output:\n{}", stdout);
 
-    let mut disks = Vec::new();
-
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("Node") {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 5 {
-            continue;
-        }
-
-        let device_id = parts[1].trim();
-        let size_str = parts[2].trim();
-        let free_str = parts[3].trim();
-        let drive_type_str = parts[4].trim();
-
-        if drive_type_str != "3" {
-            continue;
-        }
-
-        let size_gb = size_str.parse::<u64>().unwrap_or(0) / (1024 * 1024 * 1024);
-        let free_gb = free_str.parse::<u64>().unwrap_or(0) / (1024 * 1024 * 1024);
-
-        disks.push(DiskInfo {
-            name: format!("{} Drive", device_id),
-            size_gb,
-            free_space_gb: free_gb,
-        });
-    }
-
-    eprintln!("[get_available_disks] wmic parsed {} disks", disks.len());
-    Ok(disks)
-}
-
-/// Set disk selection and Linux partition size
-#[tauri::command]
-fn set_disk_config(disk_name: String, linux_size_gb: u64, state: State<AppState>) -> Result<()> {
-    let mut config = state.config.lock().map_err(|e| {
-        InstallerError::Unknown(format!("Failed to lock state: {}", e))
-    })?;
-    
-    config.selected_disk = Some(disk_name);
-    config.linux_size_gb = Some(linux_size_gb);
-    
-    Ok(())
-}
 
 /// Validate and set user configuration
 #[tauri::command]
