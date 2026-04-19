@@ -5,10 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::{Manager, State, Emitter, AppHandle};
+use tauri::{State, Emitter, AppHandle};
 use thiserror::Error;
-use std::ffi::c_void;
-
 // Configuration struct that can be serialized to JSON for the next stage
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct InstallConfig {
@@ -226,97 +224,18 @@ async fn detect_system_info() -> Result<SystemInfo> {
 fn get_available_disks() -> Result<Vec<DiskInfo>> {
     #[cfg(windows)]
     {
-        use wmi::{COMLibrary, WMIConnection};
-        use serde::Deserialize;
-
-        #[derive(Deserialize, Debug)]
-        struct Win32DiskDrive {
-            #[serde(rename = "Model")]
-            model: String,
-            #[serde(rename = "Size")]
-            size: Option<i64>,
-            #[serde(rename = "Index")]
-            index: u32,
-            #[serde(rename = "MediaType")]
-            media_type: Option<String>,
-        }
-
-        #[derive(Deserialize, Debug)]
-        struct Win32LogicalDisk {
-            #[serde(rename = "DeviceID")]
-            device_id: String,
-            #[serde(rename = "Size")]
-            size: Option<i64>,
-            #[serde(rename = "FreeSpace")]
-            free_space: Option<i64>,
-            #[serde(rename = "DriveType")]
-            drive_type: u32,
-            #[serde(rename = "VolumeName")]
-            volume_name: Option<String>,
-        }
-
-        let com = COMLibrary::new().map_err(|e| {
-            InstallerError::SystemCheckFailed(format!("COM init failed: {}", e))
-        })?;
-
-        let wmi = WMIConnection::new(com).map_err(|e| {
-            InstallerError::SystemCheckFailed(format!("WMI connection failed: {}", e))
-        })?;
-
-        let disk_drives: Vec<Win32DiskDrive> = wmi
-            .raw_query("SELECT * FROM Win32_DiskDrive")
-            .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
-
-        let logical_disks: Vec<Win32LogicalDisk> = wmi
-            .raw_query("SELECT * FROM Win32_LogicalDisk WHERE DriveType=3")
-            .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
-
-        let mut disks = Vec::new();
-
-        // Present logical fixed disks (DriveType=3) — these are what users select
-        for ld in logical_disks {
-            if ld.drive_type != 3 {
-                continue;
+        // Try WMI first
+        match get_available_disks_wmi() {
+            Ok(disks) if !disks.is_empty() => {
+                eprintln!("[get_available_disks] WMI returned {} disks", disks.len());
+                return Ok(disks);
             }
-
-            let size_gb = ld.size.map(|s| (s as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
-            let free_gb = ld.free_space.map(|f| (f as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
-
-            let name = match &ld.volume_name {
-                Some(vol) if !vol.is_empty() => {
-                    format!("{} ({}:)", ld.device_id.trim_end_matches(':'), vol)
-                }
-                _ => ld.device_id.clone(),
-            };
-
-            disks.push(DiskInfo {
-                name,
-                size_gb,
-                free_space_gb: free_gb,
-            });
+            Ok(_) => eprintln!("[get_available_disks] WMI returned empty, trying fallback"),
+            Err(e) => eprintln!("[get_available_disks] WMI failed: {}, trying fallback", e),
         }
 
-        // Fallback to physical disks if no logical fixed disks were found
-        if disks.is_empty() {
-            for drive in disk_drives {
-                let is_fixed = drive.media_type.as_deref()
-                    .map(|m| m.contains("Fixed"))
-                    .unwrap_or(false);
-
-                if !is_fixed {
-                    continue;
-                }
-
-                let size_gb = drive.size.map(|s| (s as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
-                disks.push(DiskInfo {
-                    name: format!("Disk {} ({})", drive.index, drive.model.trim()),
-                    size_gb,
-                    free_space_gb: 0,
-                });
-            }
-        }
-
-        Ok(disks)
+        // Fallback to wmic command
+        get_available_disks_wmic()
     }
     #[cfg(not(windows))]
     {
@@ -333,6 +252,108 @@ fn get_available_disks() -> Result<Vec<DiskInfo>> {
             },
         ])
     }
+}
+
+#[cfg(windows)]
+fn get_available_disks_wmi() -> Result<Vec<DiskInfo>> {
+    use wmi::{COMLibrary, WMIConnection};
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    struct Win32LogicalDisk {
+        #[serde(rename = "DeviceID")]
+        device_id: String,
+        #[serde(rename = "Size")]
+        size: Option<i64>,
+        #[serde(rename = "FreeSpace")]
+        free_space: Option<i64>,
+        #[serde(rename = "DriveType")]
+        drive_type: u32,
+    }
+
+    let com = COMLibrary::new().map_err(|e| {
+        InstallerError::SystemCheckFailed(format!("COM init failed: {}", e))
+    })?;
+
+    let wmi = WMIConnection::new(com).map_err(|e| {
+        InstallerError::SystemCheckFailed(format!("WMI connection failed: {}", e))
+    })?;
+
+    let logical_disks: Vec<Win32LogicalDisk> = wmi
+        .raw_query("SELECT * FROM Win32_LogicalDisk WHERE DriveType=3")
+        .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
+
+    let mut disks = Vec::new();
+    for ld in logical_disks {
+        if ld.drive_type != 3 {
+            continue;
+        }
+        let size_gb = ld.size.map(|s| (s as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
+        let free_gb = ld.free_space.map(|f| (f as u64) / (1024 * 1024 * 1024)).unwrap_or(0);
+        disks.push(DiskInfo {
+            name: format!("{} Drive", ld.device_id),
+            size_gb,
+            free_space_gb: free_gb,
+        });
+    }
+
+    Ok(disks)
+}
+
+#[cfg(windows)]
+fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
+    eprintln!("[get_available_disks] Running wmic fallback");
+
+    let output = std::process::Command::new("wmic")
+        .args(&["logicaldisk", "get", "DeviceID,Size,FreeSpace,DriveType", "/format:csv"])
+        .output()
+        .map_err(|e| InstallerError::SystemCheckFailed(format!("wmic command failed: {}", e)))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        return Err(InstallerError::SystemCheckFailed(
+            format!("wmic failed: {}", stderr)
+        ));
+    }
+
+    eprintln!("[get_available_disks] wmic output:\n{}", stdout);
+
+    let mut disks = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Node") {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+
+        let device_id = parts[1].trim();
+        let size_str = parts[2].trim();
+        let free_str = parts[3].trim();
+        let drive_type_str = parts[4].trim();
+
+        if drive_type_str != "3" {
+            continue;
+        }
+
+        let size_gb = size_str.parse::<u64>().unwrap_or(0) / (1024 * 1024 * 1024);
+        let free_gb = free_str.parse::<u64>().unwrap_or(0) / (1024 * 1024 * 1024);
+
+        disks.push(DiskInfo {
+            name: format!("{} Drive", device_id),
+            size_gb,
+            free_space_gb: free_gb,
+        });
+    }
+
+    eprintln!("[get_available_disks] wmic parsed {} disks", disks.len());
+    Ok(disks)
 }
 
 /// Set disk selection and Linux partition size
@@ -708,14 +729,14 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-fn reg_query_string(hkey: *mut c_void, subkey: &str, value: &str) -> Option<String> {
+fn reg_query_string(hkey: *mut std::ffi::c_void, subkey: &str, value: &str) -> Option<String> {
     use windows_sys::Win32::System::Registry::{
         RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
     };
 
     let subkey_wide = to_wide(subkey);
     let value_wide = to_wide(value);
-    let mut h: *mut c_void = std::ptr::null_mut();
+    let mut h: *mut std::ffi::c_void = std::ptr::null_mut();
 
     let status = unsafe {
         RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
@@ -770,14 +791,14 @@ fn reg_query_string(hkey: *mut c_void, subkey: &str, value: &str) -> Option<Stri
 }
 
 #[cfg(windows)]
-fn reg_query_dword(hkey: *mut c_void, subkey: &str, value: &str) -> Option<u32> {
+fn reg_query_dword(hkey: *mut std::ffi::c_void, subkey: &str, value: &str) -> Option<u32> {
     use windows_sys::Win32::System::Registry::{
         RegOpenKeyExW, RegQueryValueExW, RegCloseKey, KEY_READ,
     };
 
     let subkey_wide = to_wide(subkey);
     let value_wide = to_wide(value);
-    let mut h: *mut c_void = std::ptr::null_mut();
+    let mut h: *mut std::ffi::c_void = std::ptr::null_mut();
 
     let status = unsafe {
         RegOpenKeyExW(hkey, subkey_wide.as_ptr(), 0, KEY_READ, &mut h)
