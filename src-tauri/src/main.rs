@@ -265,9 +265,9 @@ fn get_available_disks_wmi() -> Result<Vec<DiskInfo>> {
         #[serde(rename = "DeviceID")]
         device_id: String,
         #[serde(rename = "Size")]
-        size: Option<i64>,
+        size: Option<u64>,
         #[serde(rename = "FreeSpace")]
-        free_space: Option<i64>,
+        free_space: Option<u64>,
         #[serde(rename = "DriveType")]
         drive_type: u32,
     }
@@ -312,6 +312,7 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
     .map_err(|e| InstallerError::SystemCheckFailed(format!("wmic failed: {}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!("[get_available_disks] wmic output:\n{}", stdout);
     println!("[get_available_disks] wmic output: {}", stdout);
 
     let mut disks = Vec::new();
@@ -328,10 +329,11 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
             // Only fixed drives (type 3) with valid data
             if dtype == "3" && !size.is_empty() && size != "Size" {
                 if let (Ok(total_bytes), Ok(free_bytes)) = (size.parse::<u64>(), free.parse::<u64>()) {
-                    let total_gb = (total_bytes / (1024*1024*1024)) as i64;
-                    let free_gb = (free_bytes / (1024*1024*1024)) as i64;
+                    let total_gb = (total_bytes / (1024*1024*1024)) as u64;
+                    let free_gb = (free_bytes / (1024*1024*1024)) as u64;
 
                     disks.push(DiskInfo {
+                        name: format("{} Drive", name),
                         size_gb: total_gb,           // NOT total_size
                         free_space_gb: free_gb,      // NOT free_space
                     });
@@ -348,7 +350,7 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
     Ok(disks)
     }
 
-    eprintln!("[get_available_disks] wmic output:\n{}", stdout);
+
 
 
 /// Validate and set user configuration
@@ -1254,7 +1256,6 @@ fn main() {
             save_config_to_json,
             detect_system_info,
             get_available_disks,
-            set_disk_config,
             set_user_config,
             set_edition,
             start_installation,
