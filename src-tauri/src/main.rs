@@ -309,7 +309,7 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
     let output = std::process::Command::new("cmd")
     .args(&["/c", "wmic logicaldisk get DeviceID,Size,FreeSpace,DriveType /format:csv"])
     .output()
-    .map_err(|e| format!("wmic failed: {}", e))?;
+    .map_err(|e| InstallerError::SystemCheckFailed(format!("wmic failed: {}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     println!("[get_available_disks] wmic output: {}", stdout);
@@ -332,10 +332,8 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
                     let free_gb = (free_bytes / (1024*1024*1024)) as i64;
 
                     disks.push(DiskInfo {
-                        name: format!("{} ({} GB total, {} GB free)", name, total_gb, free_gb),
-                               total_size: total_gb,
-                               free_space: free_gb,
-                               is_removable: false,
+                        size_gb: total_gb,           // NOT total_size
+                        free_space_gb: free_gb,      // NOT free_space
                     });
                     println!("[get_available_disks] Found disk: {} {}GB total {}GB free", name, total_gb, free_gb);
                 }
@@ -344,7 +342,7 @@ fn get_available_disks_wmic() -> Result<Vec<DiskInfo>> {
     }
 
     if disks.is_empty() {
-        return Err("No disks found".to_string());
+        return Err(InstallerError::SystemCheckFailed("No disks found".to_string()));
     }
 
     Ok(disks)
