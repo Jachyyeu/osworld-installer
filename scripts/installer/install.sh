@@ -24,9 +24,11 @@ DRY_RUN=false
 
 run() {
   if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY] Would run: $*"
     echo -e "${BLUE}[DRY] Would: $*${RESET}"
     return 0
   fi
+  log_info "Running: $*"
   echo -e "${GREEN}[OK] Running: $*${RESET}"
   "$@"
 }
@@ -119,21 +121,34 @@ main() {
     DRY_RUN=true
   fi
 
+  # Source libraries — logging first so other libs can use it
+  source "$LIB_DIR/logging.sh"
+  source "$LIB_DIR/compatibility.sh"
+  source "$LIB_DIR/disk.sh"
+  source "$LIB_DIR/bootstrap.sh"
+  source "$LIB_DIR/drivers.sh"
+  source "$LIB_DIR/system.sh"
+  source "$LIB_DIR/migration.sh"
+  source "$LIB_DIR/bootloader.sh"
+
+  # Start logging
+  log_start
+
+  # Step 1 — Environment verification
   verify_environment
+
+  # Step 2 — Config parsing
   parse_config "/tmp/install-config.json"
 
   if [[ -z "${target_disk:-}" ]]; then
-    echo -e "${RED}[FAIL] target_disk is not set in configuration.${RESET}"
+    log_error "target_disk is not set in configuration."
     exit 1
   fi
 
   check_mounted "$target_disk"
 
-  # Source libraries
-  source "$LIB_DIR/disk.sh"
-  source "$LIB_DIR/bootstrap.sh"
-  source "$LIB_DIR/bootloader.sh"
-  source "$LIB_DIR/system.sh"
+  # Step 3 — Hardware compatibility check
+  verify_compatibility "$target_disk"
 
   echo ""
   echo -e "${BLUE}========================================${RESET}"
@@ -141,10 +156,10 @@ main() {
   echo -e "${BLUE}========================================${RESET}"
   echo ""
 
-  # Step 1 — Partition
+  # Step 4 — Partition
   partition_disk "$target_disk" "$mode"
 
-  # Step 2 — Detect partitions
+  # Step 5 — Detect partitions
   get_partitions "$target_disk"
 
   if [[ -z "${EFI_PART:-}" || -z "${ROOT_PART:-}" || -z "${HOME_PART:-}" ]]; then
@@ -154,22 +169,35 @@ main() {
       ROOT_PART=$(get_partition_name "$target_disk" 2)
       HOME_PART=$(get_partition_name "$target_disk" 3)
     else
-      echo -e "${RED}[FAIL] Could not find all required partitions after partitioning.${RESET}"
+      log_error "Could not find all required partitions after partitioning."
       exit 1
     fi
   fi
 
-  # Step 3 — Format & mount
+  # Step 6 — Format & mount
   format_and_mount_partitions
 
-  # Step 4 — Bootstrap base system
+  # Step 7 — Bootstrap base system
   bootstrap_system
 
-  # Step 5 — Bootloader
+  # Step 8 — Install hardware drivers
+  install_drivers
+
+  # Step 9 — System configuration
+  configure_system "$hostname" "$username" "$password" "$timezone" "$locale" "$keymap"
+
+  # Step 10 — Migrate Windows files (only in dual-boot mode)
+  if [[ "$mode" == "dual_boot" ]]; then
+    migrate_windows_files "$target_disk" "$username"
+  else
+    log_info "Wipe mode selected. Skipping Windows file migration."
+  fi
+
+  # Step 11 — Bootloader
   install_bootloader
 
-  # Step 6 — System configuration
-  configure_system "$hostname" "$username" "$password" "$timezone" "$locale" "$keymap"
+  # Step 12 — Finalize
+  finalize_installation
 
   echo ""
   if [[ "$DRY_RUN" == true ]]; then
@@ -184,6 +212,35 @@ main() {
     echo -e "${GREEN}========================================${RESET}"
     echo -e "${GREEN}You can now reboot into your new system.${RESET}"
   fi
+}
+
+finalize_installation() {
+  echo ""
+  log_info "Finalizing installation..."
+
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY] Would unmount all partitions and sync."
+    echo -e "${BLUE}[DRY] Would unmount all partitions and sync.${RESET}"
+    return 0
+  fi
+
+  # Ensure any pending writes are flushed
+  sync
+
+  # Copy install log to target system
+  if [[ -f "$LOG_FILE_LIVE" && -d /mnt/home ]]; then
+    local log_dst="/mnt/home/${username}/install.log"
+    cp "$LOG_FILE_LIVE" "$log_dst" 2>/dev/null || true
+    chown "${username}:${username}" "$log_dst" 2>/dev/null || true
+    log_info "Install log copied to ${username}'s home directory."
+  fi
+
+  # Unmount everything
+  umount -R /mnt/boot/efi 2>/dev/null || true
+  umount -R /mnt/home 2>/dev/null || true
+  umount -R /mnt 2>/dev/null || true
+
+  log_ok "Installation finalized."
 }
 
 main "$@"
