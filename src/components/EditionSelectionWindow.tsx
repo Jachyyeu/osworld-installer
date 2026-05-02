@@ -7,7 +7,6 @@ import {
   ArrowRight, 
   ArrowLeft,
   Star,
-  Zap,
   Monitor
 } from 'lucide-react';
 import { setEdition } from '../lib/tauri';

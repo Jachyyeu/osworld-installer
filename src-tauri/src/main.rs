@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{State, Emitter, AppHandle};
 use thiserror::Error;
+#[cfg(windows)]
 use std::ffi::c_void;
 // Configuration struct that can be serialized to JSON for the next stage
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -523,7 +524,8 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
              create partition primary size={}\n\
              format fs=fat32 quick label=OSWORLDBOOT\n\
              assign\n\
-             create partition primary size={}\n",
+             create partition primary size={}\n\
+             set id={{0FC63DAF-8483-4772-8E79-3D69D8477DE4}}\n",
             disk_index, shrink_mb, boot_mb, linux_mb
         ))?;
 
@@ -589,6 +591,15 @@ async fn download_and_stage_iso(
             ));
         }
 
+        // Extract kernel and initrd from the ISO so rEFInd can boot it directly
+        let iso_label = extract_arch_iso_files(&iso_path, drive).await?;
+
+        // Save ISO label for refind.conf generation
+        let label_path = format!("{}:\\iso-label.txt", drive);
+        tokio::fs::write(&label_path, &iso_label).await.map_err(|e| {
+            InstallerError::InstallationError(format!("Failed to write ISO label: {}", e))
+        })?;
+
         Ok(result)
     }
     #[cfg(not(windows))]
@@ -612,7 +623,7 @@ async fn install_refind() -> Result<()> {
         })?;
 
         // Download rEFInd bin zip
-        let refind_url = "https://sourceforge.net/projects/refind/files/0.14.2/refind-bin-0.14.2.zip/download";
+        let refind_url = "https://downloads.sourceforge.net/project/refind/0.14.2/refind-bin-0.14.2.zip";
         download_file_simple(refind_url, &zip_path).await?;
 
         // Extract zip
@@ -652,17 +663,29 @@ async fn install_refind() -> Result<()> {
             copy_dir_all(&icons_src, &icons_dst)?;
         }
 
-        // Create refind.conf
-        let config_content = r#"timeout 10
+        // Read ISO label from boot partition for archisolabel parameter
+        let iso_label = find_volume_by_label("OSWORLDBOOT")
+            .and_then(|letter| {
+                let path = format!("{}\\iso-label.txt", letter.trim_end_matches(':'));
+                std::fs::read_to_string(&path).ok()
+            })
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "ARCH_202501".to_string());
 
-menuentry "OSWorld Installer" {
+        // Create refind.conf with proper EFI-style forward-slash paths
+        let config_content = format!(
+            r#"timeout 10
+
+menuentry "OSWorld Installer" {{
     icon \EFI\refind\icons\os_linux.png
     volume OSWORLDBOOT
-    loader /arch.iso
-    initrd /arch\boot\x86_64\archiso.img
-    options "img_dev=/dev/disk/by-label/OSWORLDBOOT img_loop=/arch.iso"
-}
-"#;
+    loader /arch/boot/x86_64/vmlinuz-linux
+    initrd /arch/boot/x86_64/archiso.img
+    options "img_dev=/dev/disk/by-label/OSWORLDBOOT img_loop=/arch.iso archisobasedir=arch archisolabel={}"
+}}
+"#,
+            iso_label
+        );
         std::fs::write(format!("{}refind.conf", refind_efi_path), config_content).map_err(|e| {
             InstallerError::InstallationError(format!("Failed to write refind.conf: {}", e))
         })?;
@@ -1029,6 +1052,60 @@ fn find_linux_partition_number(disk_index: u32) -> Option<u32> {
         .trim()
         .parse::<u32>()
         .ok()
+}
+
+/// Mount the Arch ISO, extract kernel and initrd to the boot partition,
+/// and return the ISO filesystem label.
+#[cfg(windows)]
+async fn extract_arch_iso_files(iso_path: &str, dest_drive: &str) -> Result<String> {
+    let drive = dest_drive.trim_end_matches(':');
+    let dest_dir = format!("{}:\\arch\\boot\\x86_64", drive);
+
+    tokio::fs::create_dir_all(&dest_dir).await.map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to create arch boot dir: {}", e))
+    })?;
+
+    let ps_script = format!(
+        "$iso = Mount-DiskImage -ImagePath '{}' -PassThru; \
+         Start-Sleep -Milliseconds 800; \
+         $vol = $iso | Get-Volume; \
+         $letter = $vol.DriveLetter; \
+         $label = $vol.FileSystemLabel; \
+         Copy-Item -Path \"${{letter}}:\\arch\\boot\\x86_64\\vmlinuz-linux\" -Destination \"{}\\vmlinuz-linux\" -Force; \
+         Copy-Item -Path \"${{letter}}:\\arch\\boot\\x86_64\\archiso.img\" -Destination \"{}\\archiso.img\" -Force; \
+         Dismount-DiskImage -ImagePath '{}'; \
+         Write-Output \"LABEL=$label\"",
+        iso_path,
+        dest_dir,
+        dest_dir,
+        iso_path
+    );
+
+    let output = run_powershell(&ps_script)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let label = stdout
+        .lines()
+        .find(|l| l.starts_with("LABEL="))
+        .and_then(|l| l.strip_prefix("LABEL="))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "ARCH_202501".to_string());
+
+    let vmlinuz_path = format!("{}\\vmlinuz-linux", dest_dir);
+    let initrd_path = format!("{}\\archiso.img", dest_dir);
+
+    if !std::path::Path::new(&vmlinuz_path).exists() {
+        return Err(InstallerError::InstallationError(
+            "Failed to extract vmlinuz-linux from ISO".to_string()
+        ));
+    }
+    if !std::path::Path::new(&initrd_path).exists() {
+        return Err(InstallerError::InstallationError(
+            "Failed to extract archiso.img from ISO".to_string()
+        ));
+    }
+
+    Ok(label)
 }
 
 #[cfg(windows)]

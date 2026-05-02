@@ -12,7 +12,7 @@ type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'e
 function App() {
   const [currentStep, setCurrentStep] = useState<WindowStep>('welcome');
   const [installType, setInstallTypeState] = useState<InstallType | null>(null);
-  const [config, setConfig] = useState<InstallConfig>({});
+  const [, setConfig] = useState<InstallConfig>({});
 
   const handleInstallTypeSelect = (type: InstallType) => {
     setInstallTypeState(type);
