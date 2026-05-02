@@ -7,6 +7,8 @@ set -euo pipefail
 # Runs BEFORE partitioning. Uses lspci and lsusb.
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 if [[ -z "${GREEN:-}" ]]; then
   GREEN='\033[0;32m'
   RED='\033[0;31m'

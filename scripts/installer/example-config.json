@@ -1,6 +1,6 @@
 {
   "target_disk": "/dev/sda",
-  "mode": "dual_boot",
+  "mode": "dualboot",
   "hostname": "archbox",
   "username": "alice",
   "password": "SecurePass123!",

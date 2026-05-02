@@ -121,6 +121,9 @@ main() {
     DRY_RUN=true
   fi
 
+  # Export so subshells and independently-sourced libs see it
+  export DRY_RUN
+
   # Source libraries — logging first so other libs can use it
   source "$LIB_DIR/logging.sh"
   source "$LIB_DIR/compatibility.sh"
@@ -187,7 +190,7 @@ main() {
   configure_system "$hostname" "$username" "$password" "$timezone" "$locale" "$keymap"
 
   # Step 10 — Migrate Windows files (only in dual-boot mode)
-  if [[ "$mode" == "dual_boot" ]]; then
+  if [[ "$mode" == "dualboot" ]]; then
     migrate_windows_files "$target_disk" "$username"
   else
     log_info "Wipe mode selected. Skipping Windows file migration."

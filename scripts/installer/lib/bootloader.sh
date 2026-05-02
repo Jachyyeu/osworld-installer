@@ -6,6 +6,8 @@ set -euo pipefail
 # Designed to be sourced by install.sh
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 install_bootloader() {
   echo ""
   echo -e "${BLUE}[INFO] Installing GRUB bootloader for UEFI...${RESET}"
@@ -19,14 +21,15 @@ install_bootloader() {
   echo -e "${BLUE}[INFO] Enabling os-prober to detect Windows...${RESET}"
 
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would append to /mnt/etc/default/grub:${RESET}"
-    echo -e "${BLUE}[DRY]   GRUB_DISABLE_OS_PROBER=false${RESET}"
+    echo -e "${BLUE}[DRY] Would ensure GRUB_DISABLE_OS_PROBER=false in /mnt/etc/default/grub${RESET}"
   else
-    if ! grep -q '^GRUB_DISABLE_OS_PROBER=false' /mnt/etc/default/grub; then
+    if grep -q '^GRUB_DISABLE_OS_PROBER=' /mnt/etc/default/grub; then
+      # Replace any existing value (including true)
+      run sed -i 's/^GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /mnt/etc/default/grub
+      echo -e "${GREEN}[OK] os-prober enabled (replaced existing value).${RESET}"
+    else
       echo 'GRUB_DISABLE_OS_PROBER=false' >> /mnt/etc/default/grub
       echo -e "${GREEN}[OK] os-prober enabled.${RESET}"
-    else
-      echo -e "${GREEN}[OK] os-prober already enabled.${RESET}"
     fi
   fi
 

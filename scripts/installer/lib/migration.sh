@@ -8,6 +8,8 @@ set -euo pipefail
 # Only runs in dual-boot mode.
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 if [[ -z "${GREEN:-}" ]]; then
   GREEN='\033[0;32m'
   RED='\033[0;31m'
@@ -232,8 +234,18 @@ migrate_windows_files() {
   if [[ "${DRY_RUN:-false}" == true ]]; then
     _log_migrate "[DRY] Would mount ${win_part} → ${win_mount} (read-only)"
   else
-    mount -o ro "$win_part" "$win_mount"
-    _log_migrate_ok "Windows partition mounted."
+    if ! mount -o ro "$win_part" "$win_mount"; then
+      _log_migrate_warn "Failed to mount Windows partition. It may be hibernated or corrupted."
+      rmdir "$win_mount" 2>/dev/null || true
+      return 0
+    fi
+
+    # Verify the mount is actually read-only
+    if grep -q " ${win_mount} .*\bro\b" /proc/mounts 2>/dev/null; then
+      _log_migrate_ok "Windows partition mounted read-only."
+    else
+      _log_migrate_warn "Windows partition mount could not be verified as read-only. Proceeding with caution."
+    fi
   fi
 
   local win_user_dir

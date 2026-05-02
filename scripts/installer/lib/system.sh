@@ -6,6 +6,8 @@ set -euo pipefail
 # Designed to be sourced by install.sh
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 configure_system() {
   local hostname="$1"
   local username="$2"
@@ -30,10 +32,10 @@ configure_system() {
     echo -e "${BLUE}[DRY] Would create /mnt/etc/locale.conf with LANG=${locale}${RESET}"
   else
     if grep -q "^#${locale}" /mnt/etc/locale.gen; then
-      sed -i "s/^#${locale}/${locale}/" /mnt/etc/locale.gen
+      run sed -i "s/^#${locale}/${locale}/" /mnt/etc/locale.gen
       echo -e "${GREEN}[OK] Uncommented ${locale} in locale.gen.${RESET}"
     fi
-    arch-chroot /mnt locale-gen
+    run arch-chroot /mnt locale-gen
     echo "LANG=${locale}" > /mnt/etc/locale.conf
     echo -e "${GREEN}[OK] Locale configured.${RESET}"
   fi
@@ -71,7 +73,7 @@ EOF
   if [[ "$DRY_RUN" == true ]]; then
     echo -e "${BLUE}[DRY] Would set password for user ${username}${RESET}"
   else
-    echo "${username}:${password}" | arch-chroot /mnt chpasswd
+    run arch-chroot /mnt chpasswd <<< "${username}:${password}"
     echo -e "${GREEN}[OK] Password set.${RESET}"
   fi
 
@@ -80,7 +82,7 @@ EOF
   if [[ "$DRY_RUN" == true ]]; then
     echo -e "${BLUE}[DRY] Would uncomment '%wheel ALL=(ALL:ALL) ALL' in /mnt/etc/sudoers${RESET}"
   else
-    sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+    run sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
     echo -e "${GREEN}[OK] Sudo enabled for wheel group.${RESET}"
   fi
 

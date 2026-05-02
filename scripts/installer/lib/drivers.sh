@@ -8,6 +8,8 @@ set -euo pipefail
 # Detects hardware and installs correct drivers via pacman.
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 if [[ -z "${GREEN:-}" ]]; then
   GREEN='\033[0;32m'
   RED='\033[0;31m'
@@ -136,13 +138,16 @@ _install_gpu_drivers() {
       if [[ "${DRY_RUN:-false}" == false ]]; then
         local grub_default="/mnt/etc/default/grub"
         if [[ -f "$grub_default" ]]; then
-          if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_default"; then
+          if grep -q 'nvidia-drm.modeset=1' "$grub_default"; then
+            _log_driver "nvidia-drm.modeset=1 already present in GRUB config. Skipping."
+          elif grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub_default"; then
             # Append to existing parameters
-            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' "$grub_default"
+            run sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' "$grub_default"
+            _log_driver_ok "GRUB cmdline updated for NVIDIA."
           else
             echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet nvidia-drm.modeset=1"' >> "$grub_default"
+            _log_driver_ok "GRUB cmdline updated for NVIDIA."
           fi
-          _log_driver_ok "GRUB cmdline updated for NVIDIA."
         fi
       fi
       ;;

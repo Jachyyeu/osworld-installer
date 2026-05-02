@@ -7,6 +7,8 @@ set -euo pipefail
 # Expects: DRY_RUN, target_disk, mode, and color helpers
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 get_partition_name() {
   local disk="$1"
   local num="$2"
@@ -45,7 +47,7 @@ partition_disk() {
     run sgdisk -n 2:0:+20G  -t 2:8304 -c 2:"Linux Root"           "$disk"
     run sgdisk -n 3:0:0     -t 3:8302 -c 3:"Linux Home"           "$disk"
 
-  elif [[ "$mode" == "dual_boot" ]]; then
+  elif [[ "$mode" == "dualboot" ]]; then
     echo -e "${BLUE}[INFO] Dual-boot mode: making room next to Windows...${RESET}"
 
     local ntfs_name
@@ -87,7 +89,7 @@ partition_disk() {
 
   else
     echo -e "${RED}[FAIL] Unknown installation mode: ${mode}${RESET}"
-    echo -e "${RED}[FAIL] Expected 'wipe' or 'dual_boot'.${RESET}"
+    echo -e "${RED}[FAIL] Expected 'wipe' or 'dualboot'.${RESET}"
     exit 1
   fi
 

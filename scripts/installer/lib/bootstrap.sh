@@ -7,6 +7,8 @@ set -euo pipefail
 # Expects: EFI_PART, ROOT_PART, HOME_PART, DRY_RUN, helpers
 # ============================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
+
 format_and_mount_partitions() {
   echo ""
   echo -e "${BLUE}[INFO] Formatting partitions...${RESET}"
@@ -58,7 +60,7 @@ bootstrap_system() {
   if [[ "$DRY_RUN" == true ]]; then
     echo -e "${BLUE}[DRY] Would run: genfstab -U /mnt >> /mnt/etc/fstab${RESET}"
   else
-    genfstab -U /mnt >> /mnt/etc/fstab
+    run genfstab -U /mnt >> /mnt/etc/fstab
     echo -e "${GREEN}[OK] fstab generated.${RESET}"
   fi
 
