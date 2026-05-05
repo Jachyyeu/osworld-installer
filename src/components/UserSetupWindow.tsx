@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { 
-  User, 
-  Monitor, 
-  Lock, 
-  Eye, 
+import {
+  User,
+  Monitor,
+  Lock,
+  Eye,
   EyeOff,
-  ArrowRight, 
+  ArrowRight,
   ArrowLeft,
   CheckCircle,
   AlertTriangle,
@@ -36,7 +36,6 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
   const validateForm = (): ValidationError[] => {
     const newErrors: ValidationError[] = [];
 
-    // Username validation (lowercase only, at least 3 characters)
     if (username !== username.toLowerCase()) {
       newErrors.push({ field: 'username', message: 'Username must be lowercase only' });
     }
@@ -44,20 +43,17 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       newErrors.push({ field: 'username', message: 'Username must be at least 3 characters' });
     }
     if (!/^[a-z][a-z0-9_-]*$/.test(username)) {
-      newErrors.push({ field: 'username', message: 'Username must start with a letter and contain only letters, numbers, underscores, or hyphens' });
+      newErrors.push({ field: 'username', message: 'Must start with a letter and contain only letters, numbers, underscores, or hyphens' });
     }
 
-    // Computer name validation
     if (computerName.length < 3) {
       newErrors.push({ field: 'computerName', message: 'Computer name must be at least 3 characters' });
     }
 
-    // Password validation (8+ characters)
     if (password.length < 8) {
       newErrors.push({ field: 'password', message: 'Password must be at least 8 characters' });
     }
 
-    // Confirm password
     if (password !== confirmPassword) {
       newErrors.push({ field: 'confirmPassword', message: 'Passwords do not match' });
     }
@@ -83,9 +79,9 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       await setUserConfig(username, computerName, password, confirmPassword);
       onNext();
     } catch (err) {
-      setErrors([{ 
-        field: 'general', 
-        message: err instanceof Error ? err.message : 'Failed to save user configuration' 
+      setErrors([{
+        field: 'general',
+        message: err instanceof Error ? err.message : 'Failed to save user configuration'
       }]);
       setIsLoading(false);
     }
@@ -100,33 +96,47 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
     if (/[^A-Za-z0-9]/.test(pwd)) strength++;
 
     const labels = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong', 'Very Strong'];
-    const colors = ['bg-red-500', 'bg-red-400', 'bg-amber-400', 'bg-yellow-400', 'bg-green-400', 'bg-green-500'];
+    const colors = ['bg-altos-danger', 'bg-altos-danger', 'bg-altos-warning', 'bg-altos-warning', 'bg-altos-success', 'bg-altos-success'];
 
     return {
       strength,
       label: labels[strength] || 'Very Weak',
-      color: colors[strength] || 'bg-red-500'
+      color: colors[strength] || 'bg-altos-danger'
     };
   };
 
   const passwordStrength = getPasswordStrength(password);
 
+  const inputBaseClass = `
+    w-full bg-[#1a1d21] border border-altos-border rounded-lg px-3 py-2.5 text-sm text-altos-text
+    placeholder:text-altos-text-secondary/50
+    focus:outline-none focus:border-altos-blue focus:ring-1 focus:ring-altos-blue
+    transition-colors duration-150
+  `;
+
+  const inputErrorClass = `
+    w-full bg-[#1a1d21] border border-altos-danger rounded-lg px-3 py-2.5 text-sm text-altos-text
+    placeholder:text-altos-text-secondary/50
+    focus:outline-none focus:border-altos-danger focus:ring-1 focus:ring-altos-danger
+    transition-colors duration-150
+  `;
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-slate-800">User Setup</h2>
-        <p className="text-slate-600">
-          Create your user account for OSWorld Linux.
+      <div className="text-center space-y-1">
+        <h2 className="text-xl font-semibold text-altos-text">User Setup</h2>
+        <p className="text-sm text-altos-text-secondary">
+          Create your user account for AltOS Linux.
         </p>
       </div>
 
       {/* General Error */}
       {getFieldError('general') && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
+        <div className="border-l-4 border-altos-danger bg-[#1a1d21] rounded-r-lg p-4">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5" />
-            <span>{getFieldError('general')}</span>
+            <AlertTriangle className="w-5 h-5 text-altos-danger" />
+            <span className="text-sm text-altos-text">{getFieldError('general')}</span>
           </div>
         </div>
       )}
@@ -134,141 +144,120 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       {/* Form */}
       <div className="space-y-4">
         {/* Username */}
-        <div className="space-y-2">
-          <label className="block text-sm font-semibold text-slate-700">
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-altos-text">
             Username
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <User className="h-5 w-5 text-slate-400" />
+              <User className="h-4 w-4 text-altos-text-secondary" />
             </div>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase())}
-              placeholder="e.g., john_doe"
-              className={`
-                w-full pl-10 pr-4 py-3 rounded-lg border-2 transition-colors
-                ${getFieldError('username')
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                  : 'border-slate-200 focus:border-primary-500 focus:ring-primary-200'
-                }
-                focus:outline-none focus:ring-4
-              `}
+              placeholder="e.g. john_doe"
+              className={`${getFieldError('username') ? inputErrorClass : inputBaseClass} pl-9`}
             />
           </div>
           {getFieldError('username') ? (
-            <p className="text-sm text-red-600 flex items-center gap-1">
-              <AlertTriangle className="w-4 h-4" />
+            <p className="text-xs text-altos-danger flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
               {getFieldError('username')}
             </p>
           ) : (
-            <p className="text-sm text-slate-500 flex items-center gap-1">
-              <Info className="w-4 h-4" />
+            <p className="text-xs text-altos-text-secondary flex items-center gap-1">
+              <Info className="w-3 h-3" />
               Lowercase letters, numbers, underscores, and hyphens only
             </p>
           )}
         </div>
 
         {/* Computer Name */}
-        <div className="space-y-2">
-          <label className="block text-sm font-semibold text-slate-700">
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-altos-text">
             Computer Name
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Monitor className="h-5 w-5 text-slate-400" />
+              <Monitor className="h-4 w-4 text-altos-text-secondary" />
             </div>
             <input
               type="text"
               value={computerName}
               onChange={(e) => setComputerName(e.target.value)}
-              placeholder="e.g., My-Laptop"
-              className={`
-                w-full pl-10 pr-4 py-3 rounded-lg border-2 transition-colors
-                ${getFieldError('computerName')
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                  : 'border-slate-200 focus:border-primary-500 focus:ring-primary-200'
-                }
-                focus:outline-none focus:ring-4
-              `}
+              placeholder="e.g. My-Laptop"
+              className={`${getFieldError('computerName') ? inputErrorClass : inputBaseClass} pl-9`}
             />
           </div>
           {getFieldError('computerName') && (
-            <p className="text-sm text-red-600 flex items-center gap-1">
-              <AlertTriangle className="w-4 h-4" />
+            <p className="text-xs text-altos-danger flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
               {getFieldError('computerName')}
             </p>
           )}
         </div>
 
         {/* Password */}
-        <div className="space-y-2">
-          <label className="block text-sm font-semibold text-slate-700">
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-altos-text">
             Password
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Lock className="h-5 w-5 text-slate-400" />
+              <Lock className="h-4 w-4 text-altos-text-secondary" />
             </div>
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter a strong password"
-              className={`
-                w-full pl-10 pr-12 py-3 rounded-lg border-2 transition-colors
-                ${getFieldError('password')
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
-                  : 'border-slate-200 focus:border-primary-500 focus:ring-primary-200'
-                }
-                focus:outline-none focus:ring-4
-              `}
+              className={`${getFieldError('password') ? inputErrorClass : inputBaseClass} pl-9 pr-10`}
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-altos-text-secondary hover:text-altos-text transition-colors duration-150"
             >
-              {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
-          
+
           {/* Password Strength */}
           {password && (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2">
-                <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
-                  <div 
+                <div className="flex-1 h-1.5 bg-[#1e2127] rounded-full overflow-hidden">
+                  <div
                     className={`h-full ${passwordStrength.color} transition-all duration-300`}
                     style={{ width: `${(passwordStrength.strength / 5) * 100}%` }}
                   />
                 </div>
-                <span className="text-sm text-slate-600 min-w-[80px]">{passwordStrength.label}</span>
+                <span className="text-xs text-altos-text-secondary min-w-[70px] text-right">{passwordStrength.label}</span>
               </div>
             </div>
           )}
-          
+
           {getFieldError('password') ? (
-            <p className="text-sm text-red-600 flex items-center gap-1">
-              <AlertTriangle className="w-4 h-4" />
+            <p className="text-xs text-altos-danger flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
               {getFieldError('password')}
             </p>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-xs text-altos-text-secondary">
               At least 8 characters recommended
             </p>
           )}
         </div>
 
         {/* Confirm Password */}
-        <div className="space-y-2">
-          <label className="block text-sm font-semibold text-slate-700">
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-altos-text">
             Confirm Password
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <CheckCircle className="h-5 w-5 text-slate-400" />
+              <CheckCircle className="h-4 w-4 text-altos-text-secondary" />
             </div>
             <input
               type={showConfirmPassword ? 'text' : 'password'}
@@ -276,33 +265,34 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Re-enter your password"
               className={`
-                w-full pl-10 pr-12 py-3 rounded-lg border-2 transition-colors
+                w-full bg-[#1a1d21] border rounded-lg px-3 py-2.5 text-sm text-altos-text pl-9 pr-10
+                placeholder:text-altos-text-secondary/50
+                focus:outline-none focus:ring-1 transition-colors duration-150
                 ${getFieldError('confirmPassword')
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
+                  ? 'border-altos-danger focus:border-altos-danger focus:ring-altos-danger'
                   : confirmPassword && password === confirmPassword
-                    ? 'border-green-300 focus:border-green-500 focus:ring-green-200'
-                    : 'border-slate-200 focus:border-primary-500 focus:ring-primary-200'
+                    ? 'border-altos-success focus:border-altos-success focus:ring-altos-success'
+                    : 'border-altos-border focus:border-altos-blue focus:ring-altos-blue'
                 }
-                focus:outline-none focus:ring-4
               `}
             />
             <button
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-altos-text-secondary hover:text-altos-text transition-colors duration-150"
             >
-              {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+              {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
           {getFieldError('confirmPassword') && (
-            <p className="text-sm text-red-600 flex items-center gap-1">
-              <AlertTriangle className="w-4 h-4" />
+            <p className="text-xs text-altos-danger flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
               {getFieldError('confirmPassword')}
             </p>
           )}
           {confirmPassword && password === confirmPassword && !getFieldError('confirmPassword') && (
-            <p className="text-sm text-green-600 flex items-center gap-1">
-              <CheckCircle className="w-4 h-4" />
+            <p className="text-xs text-altos-success flex items-center gap-1">
+              <CheckCircle className="w-3 h-3" />
               Passwords match
             </p>
           )}
@@ -310,10 +300,10 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       </div>
 
       {/* Info Box */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-        <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-        <div className="text-sm text-blue-800">
-          <p className="font-medium mb-1">Account Information</p>
+      <div className="bg-[#1a1d21] border border-altos-border rounded-lg p-4 flex items-start gap-3">
+        <Info className="w-5 h-5 text-altos-blue flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-altos-text-secondary">
+          <p className="font-medium text-altos-text mb-1">Account Information</p>
           <p>
             This account will have administrator privileges. You'll use this username and password to log in to your system.
           </p>
@@ -321,26 +311,26 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       </div>
 
       {/* Navigation Buttons */}
-      <div className="flex justify-between pt-4">
+      <div className="flex justify-between pt-2">
         <button
           onClick={onBack}
           disabled={isLoading}
-          className="flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-slate-600
-            hover:bg-slate-100 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-altos-text-secondary
+            hover:text-altos-text hover:bg-[#1a1d21] transition-colors duration-150 disabled:opacity-50"
         >
           <ArrowLeft className="w-5 h-5" />
           <span>Back</span>
         </button>
-        
+
         <button
           onClick={handleContinue}
           disabled={isLoading || !username || !computerName || !password || !confirmPassword}
           className={`
-            flex items-center gap-2 px-8 py-3 rounded-lg font-semibold text-white
-            transition-all duration-200
+            flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white
+            transition-colors duration-150
             ${username && computerName && password && confirmPassword && !isLoading
-              ? 'bg-primary-600 hover:bg-primary-700 shadow-lg hover:shadow-xl'
-              : 'bg-slate-300 cursor-not-allowed'
+              ? 'bg-altos-blue hover:bg-altos-blue-hover'
+              : 'bg-[#3a3f47] cursor-not-allowed text-altos-text-secondary'
             }
           `}
         >

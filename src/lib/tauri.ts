@@ -1,7 +1,7 @@
 // Tauri API helper functions
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, Edition, StagingInfo, DownloadProgress, DownloadProgressEvent } from '../types';
+import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, StagingInfo, DownloadProgress, DownloadProgressEvent } from '../types';
 
 // Invoke commands with proper typing
 export async function setInstallType(installType: InstallType): Promise<void> {
@@ -42,10 +42,6 @@ export async function setUserConfig(
   });
 }
 
-export async function setEdition(edition: Edition): Promise<void> {
-  return invoke('set_edition', { edition });
-}
-
 export async function startInstallation(): Promise<void> {
   return invoke('start_installation');
 }
@@ -67,12 +63,33 @@ export async function downloadAndStageIso(targetDriveLetter: string, config: Ins
   return invoke('download_and_stage_iso', { targetDriveLetter, config });
 }
 
+export async function downloadIso(drive: string): Promise<DownloadProgress> {
+  return invoke('download_iso', { drive });
+}
+
+export async function writeConfig(config: InstallConfig, drive: string): Promise<void> {
+  return invoke('write_config', { config, drive });
+}
+
 export async function installRefind(): Promise<void> {
   return invoke('install_refind');
 }
 
 export async function rebootToInstaller(): Promise<void> {
   return invoke('reboot_to_installer');
+}
+
+export async function cleanupStaging(confirmation: string): Promise<void> {
+  return invoke('cleanup_staging', { confirmation });
+}
+
+export async function rollbackStaging(confirmation: string): Promise<{
+  success: boolean;
+  actions: { description: string; success: boolean; warning?: string }[];
+  manual_steps: string[];
+  log_path: string;
+}> {
+  return invoke('rollback_staging', { confirmation });
 }
 
 // Event listeners

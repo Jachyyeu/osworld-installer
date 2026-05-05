@@ -24,38 +24,12 @@ pub struct InstallConfig {
     pub username: Option<String>,
     pub computer_name: Option<String>,
     pub password: Option<String>,
-    pub edition: Option<Edition>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum InstallType {
     DualBoot,
     ReplaceWindows,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
-pub enum Edition {
-    Home,
-    Gaming,
-    Create,
-}
-
-impl Edition {
-    pub fn price(&self) -> &'static str {
-        match self {
-            Edition::Home => "Free",
-            Edition::Gaming => "$9.99",
-            Edition::Create => "$14.99",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            Edition::Home => "Essential features for everyday computing, web browsing, and productivity.",
-            Edition::Gaming => "Optimized for gaming with latest drivers, Steam pre-installed, and performance tweaks.",
-            Edition::Create => "Professional tools for content creation, video editing, and development workflows.",
-        }
-    }
 }
 
 // Custom error types for proper error handling
@@ -119,6 +93,34 @@ pub struct InstallProgress {
 pub struct StagingInfo {
     pub boot_partition_letter: String,
     pub linux_partition_number: u32,
+}
+
+// Rollback tracking structures
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StagingState {
+    pub timestamp: String,
+    pub disk_index: u32,
+    pub original_c_drive_size_mb: Option<u64>,
+    pub efi_entries_before: Vec<String>,
+    pub osworldboot_partition_number: Option<u32>,
+    pub linux_partition_number: Option<u32>,
+    pub osworldboot_letter: Option<String>,
+    pub stage_completed: String, // "none", "partition", "download", "refind", "reboot"
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RollbackAction {
+    pub description: String,
+    pub success: bool,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RollbackStatus {
+    pub success: bool,
+    pub actions: Vec<RollbackAction>,
+    pub manual_steps: Vec<String>,
+    pub log_path: String,
 }
 
 // Download progress event payload (emitted to frontend)
@@ -401,25 +403,6 @@ fn set_user_config(
     Ok(())
 }
 
-/// Set edition selection
-#[tauri::command]
-fn set_edition(edition: String, state: State<AppState>) -> Result<()> {
-    let mut config = state.config.lock().map_err(|e| {
-        InstallerError::Unknown(format!("Failed to lock state: {}", e))
-    })?;
-    
-    config.edition = match edition.as_str() {
-        "home" => Some(Edition::Home),
-        "gaming" => Some(Edition::Gaming),
-        "create" => Some(Edition::Create),
-        _ => return Err(InstallerError::ValidationError(
-            "Invalid edition".to_string()
-        )),
-    };
-    
-    Ok(())
-}
-
 /// Start installation process (legacy simulation — kept for compatibility)
 #[tauri::command]
 async fn start_installation(app: tauri::AppHandle) -> Result<()> {
@@ -512,6 +495,37 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             ));
         }
 
+        // Capture pre-staging state for rollback
+        let c_size_output = run_powershell("(Get-Partition -DriveLetter C).Size")?;
+        let c_size_mb = String::from_utf8_lossy(&c_size_output.stdout)
+            .trim()
+            .parse::<u64>()
+            .map(|b| b / (1024 * 1024))
+            .ok();
+
+        let efi_output = run_powershell("bcdedit /enum firmware | Select-String -Pattern 'identifier'")?;
+        let efi_entries: Vec<String> = String::from_utf8_lossy(&efi_output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let initial_state = StagingState {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .to_string(),
+            disk_index,
+            original_c_drive_size_mb: c_size_mb,
+            efi_entries_before: efi_entries,
+            osworldboot_partition_number: None,
+            linux_partition_number: None,
+            osworldboot_letter: None,
+            stage_completed: "none".to_string(),
+        };
+        save_staging_state(&initial_state)?;
+
         // Run diskpart to shrink and create partitions
         let shrink_mb = (linux_size_gb + 2) * 1024;
         let boot_mb = 2 * 1024;
@@ -539,6 +553,21 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             .ok_or_else(|| InstallerError::SystemCheckFailed(
                 "Could not locate created Linux partition".to_string()
             ))?;
+
+        let osworld_part_num = find_partition_number_by_letter(&boot_letter)?;
+
+        // Update state: partitioning complete
+        let updated_state = StagingState {
+            timestamp: initial_state.timestamp.clone(),
+            disk_index,
+            original_c_drive_size_mb: c_size_mb,
+            efi_entries_before: initial_state.efi_entries_before.clone(),
+            osworldboot_partition_number: Some(osworld_part_num),
+            linux_partition_number: Some(linux_part_num),
+            osworldboot_letter: Some(boot_letter.clone()),
+            stage_completed: "partition".to_string(),
+        };
+        save_staging_state(&updated_state)?;
 
         Ok(StagingInfo {
             boot_partition_letter: boot_letter,
@@ -599,6 +628,12 @@ async fn download_and_stage_iso(
         tokio::fs::write(&label_path, &iso_label).await.map_err(|e| {
             InstallerError::InstallationError(format!("Failed to write ISO label: {}", e))
         })?;
+
+        // Update staging state: download complete
+        if let Some(mut state) = load_staging_state() {
+            state.stage_completed = "download".to_string();
+            let _ = save_staging_state(&state);
+        }
 
         Ok(result)
     }
@@ -673,6 +708,7 @@ async fn install_refind() -> Result<()> {
             .unwrap_or_else(|| "ARCH_202501".to_string());
 
         // Create refind.conf with proper EFI-style forward-slash paths
+        // Includes both Installer and Recovery entries
         let config_content = format!(
             r#"timeout 10
 
@@ -683,8 +719,16 @@ menuentry "OSWorld Installer" {{
     initrd /arch/boot/x86_64/archiso.img
     options "img_dev=/dev/disk/by-label/OSWORLDBOOT img_loop=/arch.iso archisobasedir=arch archisolabel={}"
 }}
+
+menuentry "AltOS Recovery" {{
+    icon \EFI\refind\icons\os_rescue.png
+    volume OSWORLDBOOT
+    loader /arch/boot/x86_64/vmlinuz-linux
+    initrd /arch/boot/x86_64/archiso.img
+    options "img_dev=/dev/disk/by-label/OSWORLDBOOT img_loop=/arch.iso archisobasedir=arch archisolabel={} rescue_mode=1"
+}}
 "#,
-            iso_label
+            iso_label, iso_label
         );
         std::fs::write(format!("{}refind.conf", refind_efi_path), config_content).map_err(|e| {
             InstallerError::InstallationError(format!("Failed to write refind.conf: {}", e))
@@ -695,6 +739,12 @@ menuentry "OSWorld Installer" {{
 
         // Remove temporary ESP letter
         remove_esp_letter(&esp_letter)?;
+
+        // Update staging state: rEFInd installed
+        if let Some(mut state) = load_staging_state() {
+            state.stage_completed = "refind".to_string();
+            let _ = save_staging_state(&state);
+        }
 
         Ok(())
     }
@@ -1001,6 +1051,56 @@ fn get_system_disk_info() -> Result<(u32, bool)> {
 }
 
 #[cfg(windows)]
+fn save_staging_state(state: &StagingState) -> Result<()> {
+    let state_dir = std::path::Path::new(r"C:\ProgramData\OSWorld");
+    let state_path = state_dir.join("staging-state.json");
+    let log_dir = state_dir.join("logs");
+    
+    std::fs::create_dir_all(&state_dir).map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to create state dir: {}", e))
+    })?;
+    std::fs::create_dir_all(&log_dir).map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to create log dir: {}", e))
+    })?;
+    
+    let json = serde_json::to_string_pretty(state).map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to serialize state: {}", e))
+    })?;
+    
+    std::fs::write(&state_path, json).map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to write state file: {}", e))
+    })?;
+    
+    Ok(())
+}
+
+#[cfg(windows)]
+fn load_staging_state() -> Option<StagingState> {
+    let state_path = std::path::Path::new(r"C:\ProgramData\OSWorld\staging-state.json");
+    if !state_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(state_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+#[cfg(windows)]
+fn append_rollback_log(message: &str) {
+    let log_dir = std::path::Path::new(r"C:\ProgramData\OSWorld\logs");
+    let _ = std::fs::create_dir_all(log_dir);
+    let log_path = log_dir.join("rollback.log");
+    let now = std::time::SystemTime::now();
+    let since_epoch = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let timestamp = format!("{}.{:03}", since_epoch.as_secs(), since_epoch.subsec_millis());
+    let line = format!("[{}] {}\n", timestamp, message);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| { use std::io::Write; f.write_all(line.as_bytes()) });
+}
+
+#[cfg(windows)]
 fn run_diskpart_script(script: &str) -> Result<String> {
     let temp_path = std::env::temp_dir().join("osworld_diskpart.txt");
     std::fs::write(&temp_path, script).map_err(|e| {
@@ -1052,6 +1152,21 @@ fn find_linux_partition_number(disk_index: u32) -> Option<u32> {
         .trim()
         .parse::<u32>()
         .ok()
+}
+
+#[cfg(windows)]
+fn find_partition_number_by_letter(letter: &str) -> Result<u32> {
+    let clean = letter.trim_end_matches(':');
+    let output = run_powershell(&format!(
+        "(Get-Partition | Where-Object {{ $_.DriveLetter -eq '{}' }}).PartitionNumber",
+        clean
+    ))?;
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| InstallerError::SystemCheckFailed(
+            format!("Could not find partition number for drive {}", letter)
+        ))
 }
 
 /// Mount the Arch ISO, extract kernel and initrd to the boot partition,
@@ -1322,6 +1437,400 @@ fn copy_dir_all(src: &std::path::Path, dst: &str) -> Result<()> {
     Ok(())
 }
 
+/// Write install-config.json to the staging drive without downloading ISO.
+#[tauri::command]
+async fn write_config(config: InstallConfig, drive: String) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let drive_clean = drive.trim_end_matches(':');
+        let config_path = format!("{}:\\install-config.json", drive_clean);
+        let config_json = serde_json::to_string_pretty(&config).map_err(|e| {
+            InstallerError::Unknown(format!("Failed to serialize config: {}", e))
+        })?;
+        tokio::fs::write(&config_path, config_json).await.map_err(|e| {
+            InstallerError::InstallationError(format!("Failed to write config: {}", e))
+        })?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (config, drive);
+        Err(InstallerError::SystemCheckFailed(
+            "write_config is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Download Arch Linux ISO to the staging drive with progress events.
+#[tauri::command]
+async fn download_iso(drive: String, app: AppHandle) -> Result<DownloadProgress> {
+    #[cfg(windows)]
+    {
+        let drive_clean = drive.trim_end_matches(':');
+        let iso_path = format!("{}:\\arch.iso", drive_clean);
+        let url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
+        download_file_with_progress(url, &iso_path, &app).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (drive, app);
+        Err(InstallerError::SystemCheckFailed(
+            "download_iso is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Remove staging partitions and restore disk to pre-installation state.
+/// Requires typed confirmation "OSWORLD".
+#[tauri::command]
+fn cleanup_staging(confirmation: String) -> Result<()> {
+    if confirmation != "OSWORLD" {
+        return Err(InstallerError::ValidationError(
+            "Confirmation must be exactly OSWORLD".to_string()
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        // Find OSWORLDBOOT partition
+        let osworld_label = find_volume_by_label("OSWORLDBOOT");
+        if osworld_label.is_none() {
+            return Err(InstallerError::SystemCheckFailed(
+                "OSWORLDBOOT partition not found. Nothing to clean up.".to_string()
+            ));
+        }
+
+        // Find Linux raw partition (last partition on system disk)
+        let disk_info = get_system_disk_info()?;
+        let disk_index = disk_info.0;
+
+        // Remove Linux partition (last one on disk)
+        let linux_part = find_linux_partition_number(disk_index);
+        if linux_part.is_some() {
+            run_diskpart_script(&format!(
+                "select disk {}\nselect partition {}\ndelete partition override\n",
+                disk_index,
+                linux_part.unwrap()
+            ))?;
+        }
+
+        // Remove OSWORLDBOOT partition
+        let osworld_letter = osworld_label.unwrap();
+        let osworld_letter_clean = osworld_letter.trim_end_matches(':');
+
+        // Find partition number by drive letter
+        let output = run_powershell(&format!(
+            "(Get-Partition | Where-Object {{ $_.DriveLetter -eq '{}' }}).PartitionNumber",
+            osworld_letter_clean
+        ))?;
+        let part_num = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| InstallerError::InstallationError(
+                "Could not parse OSWORLDBOOT partition number".to_string()
+            ))?;
+
+        run_diskpart_script(&format!(
+            "select disk {}\nselect partition {}\ndelete partition override\n",
+            disk_index, part_num
+        ))?;
+
+        // Expand C: drive to reclaim space
+        run_diskpart_script(&format!(
+            "select disk {}\nselect volume C\nextend\n",
+            disk_index
+        ))?;
+
+        // Remove rEFInd from EFI
+        let esp_letter = assign_esp_letter()?;
+        let esp_path = format!("{}:\\", esp_letter);
+        let refind_path = format!("{}EFI\\refind\\", esp_path);
+        let refind_boot_path = format!("{}EFI\\BOOT\\", esp_path);
+
+        // Remove rEFInd directories (ignore errors)
+        let _ = std::fs::remove_dir_all(&refind_path);
+        let _ = std::fs::remove_dir_all(&refind_boot_path);
+
+        remove_esp_letter(&esp_letter)?;
+
+        // Clean up BCD entries for OSWorld Installer
+        let output = std::process::Command::new("bcdedit")
+            .args(&["/enum"])
+            .output()
+            .map_err(|e| InstallerError::InstallationError(format!("bcdedit enum failed: {}", e)))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains("OSWorld Installer") {
+                if let Some(guid) = line.split('{').nth(1).and_then(|s| s.split('}').next()) {
+                    let full_guid = format!("{{{}}}", guid);
+                    let _ = std::process::Command::new("bcdedit")
+                        .args(&["/delete", &full_guid, "/cleanup"])
+                        .status();
+                }
+            }
+        }
+
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = confirmation;
+        Err(InstallerError::SystemCheckFailed(
+            "cleanup_staging is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Rollback staging changes automatically.
+/// Reads staging-state.json and reverses every change made.
+/// If state file is missing, performs best-effort scan and rollback.
+#[tauri::command]
+fn rollback_staging(confirmation: String) -> Result<RollbackStatus> {
+    if confirmation != "ROLLBACK" {
+        return Err(InstallerError::ValidationError(
+            "Confirmation must be exactly ROLLBACK".to_string()
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        let mut actions: Vec<RollbackAction> = Vec::new();
+        let mut manual_steps: Vec<String> = Vec::new();
+
+        append_rollback_log("Rollback initiated.");
+
+        let state = match load_staging_state() {
+            Some(s) => {
+                append_rollback_log(&format!("Loaded state. Stage completed: {}", s.stage_completed));
+                s
+            }
+            None => {
+                append_rollback_log("No state file found. Attempting best-effort rollback.");
+                manual_steps.push("No staging state file found. Manual cleanup may be required.".to_string());
+                // Best-effort: try to find and remove OSWORLDBOOT
+                let disk_info = get_system_disk_info()?;
+                StagingState {
+                    timestamp: "0".to_string(),
+                    disk_index: disk_info.0,
+                    original_c_drive_size_mb: None,
+                    efi_entries_before: vec![],
+                    osworldboot_partition_number: None,
+                    linux_partition_number: None,
+                    osworldboot_letter: None,
+                    stage_completed: "unknown".to_string(),
+                }
+            }
+        };
+
+        let disk_index = state.disk_index;
+
+        // Step 1: Remove BCD entries for OSWorld Installer / rEFInd
+        append_rollback_log("Removing BCD entries...");
+        let output = std::process::Command::new("bcdedit")
+            .args(&["/enum"])
+            .output();
+        if let Ok(o) = output {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            for line in stdout.lines() {
+                if line.contains("OSWorld Installer") || line.contains("rEFInd") {
+                    if let Some(guid) = line.split('{').nth(1).and_then(|s| s.split('}').next()) {
+                        let full_guid = format!("{{{}}}", guid);
+                        let del_result = std::process::Command::new("bcdedit")
+                            .args(&["/delete", &full_guid, "/cleanup"])
+                            .status();
+                        if del_result.map(|s| s.success()).unwrap_or(false) {
+                            actions.push(RollbackAction {
+                                description: format!("Removed BCD entry: {}", full_guid),
+                                success: true,
+                                warning: None,
+                            });
+                        } else {
+                            actions.push(RollbackAction {
+                                description: format!("Failed to remove BCD entry: {}", full_guid),
+                                success: false,
+                                warning: Some("You may need to remove this entry manually with bcdedit".to_string()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 2: Restore Windows Boot Manager as default
+        append_rollback_log("Restoring Windows Boot Manager...");
+        let win_boot_result = run_powershell(
+            "$bootmgr = bcdedit /enum firmware | Select-String -Pattern 'bootmgr' | Select-Object -First 1; \
+             if ($bootmgr) { $guid = ($bootmgr -split '\\s+')[1]; bcdedit /displayorder $guid /addfirst | Out-Null; Write-Output 'OK' } else { Write-Output 'MISSING' }"
+        );
+        match win_boot_result {
+            Ok(o) if String::from_utf8_lossy(&o.stdout).trim() == "OK" => {
+                actions.push(RollbackAction {
+                    description: "Restored Windows Boot Manager as default".to_string(),
+                    success: true,
+                    warning: None,
+                });
+            }
+            _ => {
+                actions.push(RollbackAction {
+                    description: "Could not restore Windows Boot Manager automatically".to_string(),
+                    success: false,
+                    warning: Some("Use BIOS/UEFI settings to select Windows Boot Manager manually".to_string()),
+                });
+                manual_steps.push("Select Windows Boot Manager in your UEFI firmware settings.".to_string());
+            }
+        }
+
+        // Step 3: Remove rEFInd files from EFI
+        append_rollback_log("Removing rEFInd from EFI...");
+        if let Ok(esp_letter) = assign_esp_letter() {
+            let esp_path = format!("{}:\\", esp_letter);
+            let refind_path = format!("{}EFI\\refind\\", esp_path);
+            let refind_boot_path = format!("{}EFI\\BOOT\\", esp_path);
+            let _ = std::fs::remove_dir_all(&refind_path);
+            let _ = std::fs::remove_dir_all(&refind_boot_path);
+            let _ = remove_esp_letter(&esp_letter);
+            actions.push(RollbackAction {
+                description: "Removed rEFInd files from EFI System Partition".to_string(),
+                success: true,
+                warning: None,
+            });
+        } else {
+            actions.push(RollbackAction {
+                description: "Could not mount EFI to remove rEFInd files".to_string(),
+                success: false,
+                warning: Some("You may need to remove \\EFI\\refind manually".to_string()),
+            });
+        }
+
+        // Step 4: Remove OSWORLDBOOT partition
+        append_rollback_log("Removing OSWORLDBOOT partition...");
+        let osworld_part = state.osworldboot_partition_number
+            .or_else(|| {
+                let output = run_powershell(&format!(
+                    "(Get-Partition -DiskNumber {} | Where-Object {{ (Get-Volume -Partition $_).FileSystemLabel -eq 'OSWORLDBOOT' }}).PartitionNumber",
+                    disk_index
+                )).ok()?;
+                String::from_utf8_lossy(&output.stdout).trim().parse::<u32>().ok()
+            });
+
+        if let Some(part_num) = osworld_part {
+            let del_result = run_diskpart_script(&format!(
+                "select disk {}\nselect partition {}\ndelete partition override\n",
+                disk_index, part_num
+            ));
+            match del_result {
+                Ok(_) => {
+                    actions.push(RollbackAction {
+                        description: format!("Deleted OSWORLDBOOT partition {}", part_num),
+                        success: true,
+                        warning: None,
+                    });
+                }
+                Err(e) => {
+                    actions.push(RollbackAction {
+                        description: format!("Failed to delete OSWORLDBOOT partition: {}", e),
+                        success: false,
+                        warning: Some("Use Disk Management to delete the OSWORLDBOOT partition".to_string()),
+                    });
+                    manual_steps.push("Delete the OSWORLDBOOT partition in Windows Disk Management.".to_string());
+                }
+            }
+        } else {
+            actions.push(RollbackAction {
+                description: "OSWORLDBOOT partition not found (may already be removed)".to_string(),
+                success: true,
+                warning: None,
+            });
+        }
+
+        // Step 5: Remove raw Linux partition
+        append_rollback_log("Removing Linux partition...");
+        let linux_part = state.linux_partition_number
+            .or_else(|| find_linux_partition_number(disk_index));
+
+        if let Some(part_num) = linux_part {
+            // Make sure it's not the same as OSWORLDBOOT
+            if Some(part_num) != osworld_part {
+                let del_result = run_diskpart_script(&format!(
+                    "select disk {}\nselect partition {}\ndelete partition override\n",
+                    disk_index, part_num
+                ));
+                match del_result {
+                    Ok(_) => {
+                        actions.push(RollbackAction {
+                            description: format!("Deleted Linux partition {}", part_num),
+                            success: true,
+                            warning: None,
+                        });
+                    }
+                    Err(e) => {
+                        actions.push(RollbackAction {
+                            description: format!("Failed to delete Linux partition: {}", e),
+                            success: false,
+                            warning: Some("Use Disk Management to delete the raw Linux partition".to_string()),
+                        });
+                        manual_steps.push("Delete the raw Linux partition in Windows Disk Management.".to_string());
+                    }
+                }
+            }
+        } else {
+            actions.push(RollbackAction {
+                description: "Linux partition not found (may already be removed)".to_string(),
+                success: true,
+                warning: None,
+            });
+        }
+
+        // Step 6: Expand C: drive
+        append_rollback_log("Expanding C: drive...");
+        let extend_result = run_diskpart_script(&format!(
+            "select disk {}\nselect volume C\nextend\n",
+            disk_index
+        ));
+        match extend_result {
+            Ok(_) => {
+                actions.push(RollbackAction {
+                    description: "Expanded C: drive to reclaim space".to_string(),
+                    success: true,
+                    warning: None,
+                });
+            }
+            Err(_) => {
+                actions.push(RollbackAction {
+                    description: "Could not automatically expand C: drive".to_string(),
+                    success: false,
+                    warning: Some("You can expand C: manually in Disk Management".to_string()),
+                });
+                manual_steps.push("Right-click C: in Disk Management and select 'Extend Volume' to reclaim space.".to_string());
+            }
+        }
+
+        // Step 7: Clean up state file
+        let state_path = std::path::Path::new(r"C:\ProgramData\OSWorld\staging-state.json");
+        if state_path.exists() {
+            let _ = std::fs::remove_file(state_path);
+        }
+
+        append_rollback_log("Rollback complete.");
+
+        let all_success = actions.iter().all(|a| a.success) && manual_steps.is_empty();
+
+        Ok(RollbackStatus {
+            success: all_success,
+            actions,
+            manual_steps,
+            log_path: r"C:\ProgramData\OSWorld\logs\rollback.log".to_string(),
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = confirmation;
+        Err(InstallerError::SystemCheckFailed(
+            "rollback_staging is only supported on Windows".to_string()
+        ))
+    }
+}
+
 // ==================== Main Function ====================
 
 fn main() {
@@ -1334,14 +1843,17 @@ fn main() {
             detect_system_info,
             get_available_disks,
             set_user_config,
-            set_edition,
             start_installation,
             cancel_installation,
             calculate_estimated_time,
             prepare_staging,
             download_and_stage_iso,
+            download_iso,
+            write_config,
             install_refind,
             reboot_to_installer,
+            cleanup_staging,
+            rollback_staging,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,6 +3,45 @@
 > **Important:** These scripts run **inside an Arch Linux Live ISO**, not on Windows.
 > Boot your PC from the Arch Live USB, then run these scripts to install Linux.
 
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    WINDOWS SIDE (Tauri GUI)                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ Welcome      │→│ System Check │→│ Disk Selection   │  │
+│  │ (dual/replace)│  │ (UEFI/Secure)│  │ (shrink/slider)  │  │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  │
+│           ↓                                                    │
+│  ┌──────────────┐  ┌──────────────────────────────────────┐  │
+│  │ User Setup   │→│ Installation Progress                │  │
+│  │ (name/pwd)   │  │ • Shrink C:                          │  │
+│  └──────────────┘  │ • Create OSWORLDBOOT (2GB FAT32)     │  │
+│                    │ • Create raw Linux partition         │  │
+│                    │ • Download Arch ISO                  │  │
+│                    │ • Install rEFInd → reboot            │  │
+│                    └──────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│              ARCH LIVE ISO (scripts/installer/)              │
+│  live-bridge.sh ──→ install.sh ──→ lib/*.sh                 │
+│       ↓                ↓              ↓                      │
+│  Mount OSWORLDBOOT  Parse config   disk / bootstrap / etc.   │
+│  Read config.json   Partition      First-boot wizard setup   │
+│  Unmount            Install AltOS                            │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│              FIRST BOOT (scripts/first-boot/)                │
+│  wizard.sh ──→ steps/                                        │
+│    • import-windows.sh   (dualboot only)                     │
+│    • pick-theme.sh       (KDE presets)                       │
+│    • setup-apps.sh       (Steam, Discord, etc.)              │
+│    • finalize.sh         (flag + reboot offer)               │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ## How it works
 
 1. **Tauri GUI (Windows side)** collects your preferences:
@@ -20,15 +59,42 @@
 |------|---------|
 | `install.sh` | Main orchestrator. Run this. |
 | `live-bridge.sh` | Auto-finds staged config from OSWORLDBOOT partition and runs `install.sh` |
-| `lib/disk.sh` | Partitioning (shrink Windows, create EFI/root/home) |
+| `lib/disk.sh` | Partitioning (shrink Windows, create root/home, reuse Windows EFI in dualboot) |
 | `lib/bootstrap.sh` | Format partitions, mount, `pacstrap` base system |
-| `lib/drivers.sh` | **(NEW)** Auto-detect GPU/WiFi and install correct drivers |
+| `lib/drivers.sh` | Auto-detect GPU/WiFi and install correct drivers |
 | `lib/system.sh` | Timezone, locale, hostname, user, sudo, NetworkManager |
-| `lib/migration.sh` | **(NEW)** Migrate Documents, Pictures, bookmarks, WiFi from Windows |
+| `lib/migration.sh` | Migrate Documents, Pictures, bookmarks, WiFi from Windows |
 | `lib/bootloader.sh` | Install GRUB with Windows detection (`os-prober`) |
-| `lib/logging.sh` | **(NEW)** Universal logging to both Live env and target system |
-| `lib/compatibility.sh` | **(NEW)** Hardware compatibility check before partitioning |
+| `lib/logging.sh` | Universal logging to both Live env and target system |
+| `lib/compatibility.sh` | Hardware compatibility check before partitioning |
 | `example-config.json` | Example input for testing |
+
+### New Modules
+
+#### `scripts/first-boot/`
+
+Post-installation wizard that runs on the user's first login:
+
+- **`wizard.sh`** — Main orchestrator. Checks `~/.config/altos/first-boot-done`, runs steps in order.
+- **`steps/import-windows.sh`** — Detects Windows partition, offers checkbox-style import of Documents, Pictures, Bookmarks, WiFi profiles.
+- **`steps/pick-theme.sh`** — Interactive theme picker: Windows 11 style (default), Clean Linux, or Dark mode. Applies KDE configs from `/usr/share/altos/themes/`.
+- **`steps/setup-apps.sh`** — Optional installs for Steam, Discord, Spotify, VS Code via pacman/flatpak.
+- **`steps/finalize.sh`** — Creates completion flag, offers reboot.
+
+#### `scripts/uninstaller/`
+
+Rescue tools to remove AltOS and restore Windows:
+
+- **`uninstall.sh`** — Linux-side script. Detects AltOS partitions, removes them, cleans EFI entries, restores Windows Boot Manager via `efibootmgr`, optionally expands Windows partition. Requires typed confirmation `REMOVE`.
+- **`windows-uninstall.ps1`** — Windows-side PowerShell script. Deletes Linux partitions via `diskpart`, removes GRUB/rEFInd from EFI, restores Windows Boot Manager via `bcdedit`, optionally expands C: drive. Requires typed confirmation `REMOVE`.
+
+#### `packages/basic.yaml`
+
+Defines the free AltOS Basic package:
+- Base packages: KDE Plasma desktop, Firefox, LibreOffice, utilities
+- Post-install scripts: Windows 11 theme, shortcut mappings, Firefox privacy config, Dolphin places, LibreOffice defaults
+- Services: sddm, NetworkManager, bluetooth
+- First-boot wizard enabled
 
 ## Execution Order
 
@@ -36,13 +102,16 @@
 
 1. **`verify_environment`** — Check root, UEFI, internet
 2. **`verify_compatibility`** — Detect GPU, WiFi, storage, audio. Blocks on eMMC.
-3. **`prepare_disk`** — Partition the target disk (wipe or shrink Windows)
-4. **`install_base`** — Format, mount, `pacstrap` Arch base system
-5. **`install_drivers`** — Detect and install GPU + WiFi drivers, regenerate initramfs
-6. **`configure_system`** — Timezone, locale, hostname, user, sudo, NetworkManager
-7. **`migrate_windows_files`** — (dual-boot only) Copy user files, bookmarks, WiFi profiles
-8. **`install_bootloader`** — GRUB + os-prober for Windows detection
-9. **`finalize`** — Unmount, sync, copy log to user home
+3. **`partition_disk`** — Partition the target disk (wipe or shrink Windows)
+4. **`get_partitions`** — Detect EFI (reuse Windows ESP in dualboot), root, home
+5. **`format_and_mount_partitions`** — Format root+home; do NOT format existing EFI in dualboot
+6. **`bootstrap_system`** — `pacstrap` Arch base system
+7. **`install_drivers`** — Detect and install GPU + WiFi drivers, regenerate initramfs
+8. **`configure_system`** — Timezone, locale, hostname, user, sudo, NetworkManager
+9. **`migrate_windows_files`** — (dual-boot only) Copy user files, bookmarks, WiFi profiles
+10. **`install_bootloader`** — GRUB + os-prober for Windows detection
+11. **`enable_first_boot_wizard`** — Copy wizard to target, create KDE autostart entry
+12. **`finalize`** — Unmount, sync, copy log to user home
 
 ## Boot Staging Flow (Windows → Arch Live ISO)
 
@@ -75,54 +144,33 @@ This is the full handoff from the Windows app to the Linux installer:
 
 6. **`install.sh`** reads the config and installs Arch Linux.
 
-## New Modules
+## Disk Behavior
 
-### `lib/logging.sh`
+### Wipe Mode
+- Creates **new** EFI System Partition (512 MB)
+- Creates Linux Root (20 GB) and Linux Home (remainder)
 
-Provides universal logging for the entire installation:
+### Dual-Boot Mode
+- **Reuses existing Windows EFI partition** (does NOT create a second one)
+- Shrinks Windows NTFS partition by ~20 GB
+- Creates Linux Root (20 GB) and Linux Home (remainder)
+- Safety check: aborts if more than one EFI partition is detected
 
-- `log_start()` — Creates `/tmp/altos-install.log` and `/mnt/install.log`
-- `log_cmd()` — Wraps any command: logs it, runs it, captures stdout+stderr, logs result
-- `log_info()` / `log_warn()` / `log_error()` / `log_ok()` — Colored terminal + file output
-- On any failure, the log is automatically copied to `/tmp/altos-crash-report.txt`
+## Uninstall Instructions
 
-All logs go to **both** the Live environment (`/tmp/altos-install.log`) and the target system (`/mnt/install.log`, once `/mnt` is mounted).
+### From Windows (if you can still boot)
+1. Open PowerShell as Administrator.
+2. Run: `powershell -ExecutionPolicy Bypass -File scripts/uninstaller/windows-uninstall.ps1`
+3. Type `REMOVE` when prompted.
+4. Reboot.
 
-### `lib/compatibility.sh`
-
-Runs **before** partitioning to detect hardware issues early:
-
-- **GPU:** Intel (safe), AMD (safe), NVIDIA (warning — proprietary drivers will be installed), Optimus (warning)
-- **WiFi:** Intel (safe), Broadcom (warning — may need manual firmware), Realtek (info)
-- **Storage:** NVMe/SATA (safe), **eMMC (BLOCKS INSTALL)**
-- **Audio:** Intel HDA (safe), other (info)
-
-Output uses color coding: Green = OK, Yellow = warning but continue, Red = block and exit.
-
-### `lib/drivers.sh`
-
-Auto-detects hardware and installs the correct drivers **inside the chroot**:
-
-| Hardware | Packages Installed |
-|----------|-------------------|
-| NVIDIA GPU | `nvidia-dkms`, `nvidia-utils`, `lib32-nvidia-utils` |
-| AMD GPU | `mesa`, `lib32-mesa`, `vulkan-radeon` |
-| Intel GPU | `mesa`, `lib32-mesa`, `vulkan-intel` |
-| Broadcom WiFi | `broadcom-wl-dkms` |
-| Realtek WiFi | `rtl8821ce-dkms`, `rtl88x2bu-dkms`, etc. (chip-specific) |
-
-Also sets `nvidia-drm.modeset=1` in GRUB and regenerates the initramfs.
-
-### `lib/migration.sh`
-
-Migrates files from the existing Windows installation **only in dual-boot mode**:
-
-- Mounts the Windows NTFS partition read-only
-- Copies user folders: Documents, Pictures, Desktop, Downloads, Music, Videos
-- Copies Firefox and Chrome/Edge bookmarks
-- Copies Windows WiFi profiles (passwords must be re-entered)
-- Creates a `README.txt` in `~/windows-migration/`
-- Fixes ownership of all copied files to the new Linux user
+### From Linux Live USB (if Windows won't boot)
+1. Boot any Linux Live USB.
+2. Open a terminal.
+3. Run: `sudo bash scripts/uninstaller/uninstall.sh`
+4. Type `REMOVE` when prompted.
+5. Optional: expand Windows partition to reclaim space.
+6. Reboot.
 
 ## Usage
 
@@ -141,6 +189,21 @@ sudo bash scripts/installer/install.sh --confirm
 sudo bash scripts/installer/live-bridge.sh --confirm
 ```
 
+## Testing Checklist
+
+- [ ] `--dry-run` prints plan but touches nothing
+- [ ] `--confirm` required for destructive operations
+- [ ] `lib/disk.sh` — dualboot finds existing EFI, does not format it
+- [ ] `lib/disk.sh` — dualboot aborts if >1 EFI partition detected
+- [ ] `lib/disk.sh` — wipe mode creates new EFI, root, home
+- [ ] `lib/bootstrap.sh` — formats only partitions created in current session
+- [ ] `lib/bootloader.sh` — GRUB detects Windows via os-prober
+- [ ] `first-boot/wizard.sh` — runs only if `~/.config/altos/first-boot-done` is absent
+- [ ] `first-boot/steps/import-windows.sh` — skips gracefully if no Windows partition found
+- [ ] `uninstaller/uninstall.sh` — requires `REMOVE` typed confirmation
+- [ ] `uninstaller/uninstall.sh` — restores Windows Boot Manager via efibootmgr
+- [ ] `uninstaller/windows-uninstall.ps1` — removes BCD entries for OSWorld Installer
+
 ## Safety
 
 - `--dry-run` prints every step but touches **nothing**.
@@ -150,3 +213,5 @@ sudo bash scripts/installer/live-bridge.sh --confirm
 - `set -euo pipefail` ensures any error stops the script immediately.
 - `lib/compatibility.sh` blocks installation on unsupported hardware (eMMC).
 - On any failure, `/tmp/altos-crash-report.txt` contains the full log.
+- Destructive actions in Rust backend require typed confirmation `"OSWORLD"`.
+- `cleanup_staging()` removes Linux partitions and expands C: drive, but requires `"OSWORLD"` confirmation.

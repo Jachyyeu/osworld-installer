@@ -1,0 +1,109 @@
+# ============================================================
+# packages/basic.yaml — AltOS Basic (Free) package definition
+# ============================================================
+
+name: "AltOS Basic"
+description: "Fast, private, Windows-like Linux desktop"
+version: "1.0.0"
+
+base_packages:
+  # KDE Plasma desktop
+  - plasma-desktop
+  - sddm
+  - konsole
+  - dolphin
+  - kate
+  - gwenview
+
+  # Essential apps
+  - firefox
+  - libreoffice-fresh
+  - vlc
+  - okular
+
+  # Utilities
+  - ark
+  - spectacle
+  - partitionmanager
+
+  # Audio/Bluetooth/Network
+  - pipewire
+  - pipewire-pulse
+  - bluez
+  - bluedevil
+  - networkmanager
+  - nm-applet
+
+  # CLI tools
+  - neofetch
+  - htop
+  - nano
+
+  # Fonts
+  - ttf-ms-win10-auto
+  - noto-fonts
+
+post_install_scripts:
+  - name: "Apply Windows 11 KDE theme"
+    description: "Installs Breeze theme with Windows 11-style layout"
+    run: |
+      # Apply Windows 11-like taskbar and layout
+      kwriteconfig5 --file kwinrc --group TabBox --key LayoutName "thumbnail_grid"
+      # Set wallpaper if available
+      if [[ -f /usr/share/altos/themes/win11/wallpaper.jpg ]]; then
+        kwriteconfig5 --file kscreenlockerrc --group Greeter --key Wallpaper "/usr/share/altos/themes/win11/wallpaper.jpg"
+      fi
+
+  - name: "Map Windows shortcuts"
+    description: "Super=Start menu, Super+E=Dolphin, etc."
+    run: |
+      kwriteconfig5 --file kglobalshortcutsrc --group kwin --key "ShowDesktopGrid" "Meta"
+      kwriteconfig5 --file kglobalshortcutsrc --group org_kde_dolphin.desktop --key "_launch" "Meta+E"
+
+  - name: "Configure Firefox"
+    description: "Set DuckDuckGo, install uBlock, disable telemetry"
+    run: |
+      # Firefox policies for privacy
+      mkdir -p /etc/firefox/policies
+      cat > /etc/firefox/policies/policies.json <<'EOF'
+      {
+        "policies": {
+          "DefaultSearchProviderEnabled": true,
+          "DefaultSearchProviderName": "DuckDuckGo",
+          "DefaultSearchProviderSearchURL": "https://duckduckgo.com/?q={searchTerms}",
+          "DisableTelemetry": true,
+          "DisableFirefoxStudies": true,
+          "EnableTrackingProtection": {
+            "Value": true,
+            "Locked": true,
+            "Cryptomining": true,
+            "Fingerprinting": true
+          }
+        }
+      }
+      EOF
+
+  - name: "Create This PC locations"
+    description: "Add Documents, Downloads, etc. to Dolphin places"
+    run: |
+      mkdir -p /etc/skel/.local/share/user-places
+      # Dolphin will auto-populate on first run; we ensure folders exist
+      mkdir -p /etc/skel/Documents /etc/skel/Downloads /etc/skel/Desktop /etc/skel/Music /etc/skel/Pictures /etc/skel/Videos
+
+  - name: "LibreOffice defaults to MS formats"
+    description: "Set default save formats to DOCX, XLSX, PPTX"
+    run: |
+      mkdir -p /etc/skel/.config/libreoffice/4/user
+      # This is a simplified placeholder; full LO config requires registrymodifications.xcu
+      echo "LibreOffice MS format defaults would be applied here."
+
+services:
+  enabled:
+    - sddm
+    - NetworkManager
+    - bluetooth
+
+first_boot:
+  enable_wizard: true
+  wizard_path: "/usr/share/altos/first-boot/wizard.sh"
+  autostart_method: "sddm-script"

@@ -2,8 +2,6 @@
 
 export type InstallType = 'dualboot' | 'replace';
 
-export type Edition = 'home' | 'gaming' | 'create';
-
 export interface InstallConfig {
   install_type?: InstallType;
   windows_version?: string;
@@ -17,7 +15,6 @@ export interface InstallConfig {
   username?: string;
   computer_name?: string;
   password?: string;
-  edition?: Edition;
 }
 
 export interface SystemInfo {
@@ -58,31 +55,3 @@ export interface DownloadProgressEvent {
   percent: number;
   stage: string;
 }
-
-export interface EditionInfo {
-  id: Edition;
-  name: string;
-  price: string;
-  description: string;
-}
-
-export const EDITIONS: EditionInfo[] = [
-  {
-    id: 'home',
-    name: 'Home',
-    price: 'Free',
-    description: 'Essential features for everyday computing, web browsing, and productivity.',
-  },
-  {
-    id: 'gaming',
-    name: 'Gaming',
-    price: '$9.99',
-    description: 'Optimized for gaming with latest drivers, Steam pre-installed, and performance tweaks.',
-  },
-  {
-    id: 'create',
-    name: 'Create',
-    price: '$14.99',
-    description: 'Professional tools for content creation, video editing, and development workflows.',
-  },
-];

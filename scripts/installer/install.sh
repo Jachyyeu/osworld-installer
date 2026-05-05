@@ -199,7 +199,13 @@ main() {
   # Step 11 — Bootloader
   install_bootloader
 
-  # Step 12 — Finalize
+  # Step 12 — Enable first-boot wizard
+  enable_first_boot_wizard
+
+  # Step 13 — Setup recovery environment
+  setup_recovery_environment
+
+  # Step 14 — Finalize
   finalize_installation
 
   echo ""
@@ -214,6 +220,135 @@ main() {
     echo -e "${GREEN}  INSTALLATION COMPLETE${RESET}"
     echo -e "${GREEN}========================================${RESET}"
     echo -e "${GREEN}You can now reboot into your new system.${RESET}"
+  fi
+}
+
+enable_first_boot_wizard() {
+  echo ""
+  log_info "Enabling first-boot wizard..."
+
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY] Would enable first-boot wizard for new user."
+    echo -e "${BLUE}[DRY] Would enable first-boot wizard.${RESET}"
+    return 0
+  fi
+
+  local wizard_src="/usr/share/altos/first-boot/wizard.sh"
+  local autostart_dir="/mnt/home/${username}/.config/autostart"
+  local desktop_file="${autostart_dir}/altos-first-boot.desktop"
+
+  if [[ -f "$wizard_src" ]]; then
+    # Ensure wizard is available in target system
+    mkdir -p "/mnt/usr/share/altos/first-boot/steps"
+    cp -r "$wizard_src" "/mnt/usr/share/altos/first-boot/" 2>/dev/null || true
+    cp -r /usr/share/altos/first-boot/steps/* "/mnt/usr/share/altos/first-boot/steps/" 2>/dev/null || true
+
+    # Create KDE autostart entry for the new user
+    mkdir -p "$autostart_dir"
+    cat > "$desktop_file" <<EOF
+[Desktop Entry]
+Type=Application
+Name=AltOS First Boot Wizard
+Exec=/usr/share/altos/first-boot/wizard.sh
+Icon=system-software-install
+Terminal=true
+Hidden=false
+X-GNOME-Autostart-enabled=true
+EOF
+    chown -R "${username}:${username}" "/mnt/home/${username}/.config" 2>/dev/null || true
+    chmod +x "$wizard_src" 2>/dev/null || true
+    log_info "First-boot wizard enabled."
+    echo -e "${GREEN}[OK] First-boot wizard will run on first login.${RESET}"
+  else
+    log_warn "First-boot wizard not found at $wizard_src. Skipping."
+    echo -e "${YELLOW}[WARN] First-boot wizard source not found. Skipping.${RESET}"
+  fi
+}
+
+setup_recovery_environment() {
+  echo ""
+  log_info "Setting up recovery environment..."
+
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY] Would copy recovery scripts and enable boot-failure detection."
+    echo -e "${BLUE}[DRY] Would set up recovery environment.${RESET}"
+    return 0
+  fi
+
+  local recovery_src="/usr/share/altos/recovery"
+  local recovery_dst="/mnt/usr/share/altos/recovery"
+
+  if [[ -d "$recovery_src" ]]; then
+    mkdir -p "$recovery_dst"
+    cp -r "$recovery_src/"* "$recovery_dst/" 2>/dev/null || true
+    chmod +x "$recovery_dst/"*.sh 2>/dev/null || true
+    log_info "Recovery scripts copied to target system."
+    echo -e "${GREEN}[OK] Recovery scripts installed.${RESET}"
+  else
+    log_warn "Recovery scripts not found at $recovery_src. Skipping."
+    echo -e "${YELLOW}[WARN] Recovery source not found. Skipping.${RESET}"
+  fi
+
+  # Create systemd service for boot-failure counting
+  local systemd_dir="/mnt/etc/systemd/system"
+  mkdir -p "$systemd_dir"
+
+  cat > "$systemd_dir/altos-boot-monitor.service" <<'EOF'
+[Unit]
+Description=AltOS Boot Failure Monitor
+After=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/altos-boot-monitor.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+  # Boot monitor script
+  mkdir -p /mnt/usr/local/bin
+  cat > /mnt/usr/local/bin/altos-boot-monitor.sh <<'EOF'
+#!/bin/bash
+# Counts failed boots. If 3 failures in a row, sets flag for recovery boot.
+
+COUNTER_FILE="/var/lib/altos/boot-failures"
+RECOVERY_FLAG="/var/lib/altos/force-recovery"
+SUCCESS_FLAG="/tmp/altos-boot-success"
+MAX_FAILURES=3
+
+mkdir -p /var/lib/altos
+
+# If this script runs to completion, boot was successful
+# A failed boot would not reach this point (service not started)
+if [[ -f "$SUCCESS_FLAG" ]]; then
+  # Previous boot succeeded, reset counter
+  echo 0 > "$COUNTER_FILE"
+  rm -f "$RECOVERY_FLAG"
+else
+  # Increment failure counter
+  count=0
+  [[ -f "$COUNTER_FILE" ]] && count=$(cat "$COUNTER_FILE")
+  count=$((count + 1))
+  echo "$count" > "$COUNTER_FILE"
+
+  if [[ "$count" -ge "$MAX_FAILURES" ]]; then
+    touch "$RECOVERY_FLAG"
+    echo 0 > "$COUNTER_FILE"
+  fi
+fi
+
+# Mark this boot as successful so far
+touch "$SUCCESS_FLAG"
+EOF
+  chmod +x /mnt/usr/local/bin/altos-boot-monitor.sh
+
+  # Enable the service in target system
+  if [[ -d /mnt/etc/systemd/system ]]; then
+    arch-chroot /mnt systemctl enable altos-boot-monitor.service 2>/dev/null || true
+    log_info "Boot failure monitor enabled."
+    echo -e "${GREEN}[OK] Recovery boot detection enabled.${RESET}"
   fi
 }
 
