@@ -5,8 +5,9 @@ import SystemCheckWindow from './components/SystemCheckWindow';
 import DiskSelectionWindow from './components/DiskSelectionWindow';
 import UserSetupWindow from './components/UserSetupWindow';
 import InstallationProgressWindow from './components/InstallationProgressWindow';
+import UninstallerWindow from './components/UninstallerWindow';
 
-type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'progress';
+type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'progress' | 'uninstaller';
 
 function App() {
   const [currentStep, setCurrentStep] = useState<WindowStep>('welcome');
@@ -39,6 +40,10 @@ function App() {
     setCurrentStep(step);
   };
 
+  const handleOpenUninstaller = () => {
+    setCurrentStep('uninstaller');
+  };
+
   const renderCurrentWindow = () => {
     switch (currentStep) {
       case 'welcome':
@@ -66,6 +71,8 @@ function App() {
         );
       case 'progress':
         return <InstallationProgressWindow />;
+      case 'uninstaller':
+        return <UninstallerWindow onBack={() => setCurrentStep('welcome')} />;
       default:
         return <WelcomeWindow onSelect={handleInstallTypeSelect} />;
     }
@@ -83,16 +90,26 @@ function App() {
     <div className="min-h-screen bg-altos-bg flex items-start justify-center p-6">
       <div className="w-full max-w-2xl animate-fade-in">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-9 h-9 bg-altos-blue rounded-lg flex items-center justify-center transition-colors duration-150 hover:bg-altos-blue-hover">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-            </svg>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-altos-blue rounded-lg flex items-center justify-center transition-colors duration-150 hover:bg-altos-blue-hover">
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-altos-text leading-tight">AltOS Installer</h1>
+              <p className="text-sm text-altos-text-secondary">Linux Distribution Installer</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-semibold text-altos-text leading-tight">AltOS Installer</h1>
-            <p className="text-sm text-altos-text-secondary">Linux Distribution Installer</p>
-          </div>
+          {currentStep === 'welcome' && (
+            <button
+              onClick={handleOpenUninstaller}
+              className="text-xs text-altos-text-secondary hover:text-altos-danger transition-colors duration-150 underline"
+            >
+              Remove AltOS
+            </button>
+          )}
         </div>
 
         {/* Progress Indicator */}

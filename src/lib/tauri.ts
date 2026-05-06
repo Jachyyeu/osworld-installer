@@ -92,6 +92,29 @@ export async function rollbackStaging(confirmation: string): Promise<{
   return invoke('rollback_staging', { confirmation });
 }
 
+export async function verifyInstallation(): Promise<{
+  overall_pass: boolean;
+  checks: { name: string; passed: boolean; details: string }[];
+}> {
+  return invoke('verify_installation');
+}
+
+export async function detectAltosInstallation(): Promise<boolean> {
+  return invoke('detect_altos_installation');
+}
+
+export async function removeAltosPartitions(confirmation: string, expandCDrive: boolean): Promise<string[]> {
+  return invoke('remove_altos_partitions', { confirmation, expandCDrive });
+}
+
+export async function restoreWindowsBootloader(): Promise<string> {
+  return invoke('restore_windows_bootloader');
+}
+
+export async function removeRefindFiles(): Promise<string> {
+  return invoke('remove_refind_files');
+}
+
 // Event listeners
 export function onInstallProgress(callback: (progress: InstallProgress) => void) {
   return listen<InstallProgress>('install-progress', (event) => {

@@ -202,11 +202,11 @@ main() {
     log_info "Wipe mode selected. Skipping Windows file migration."
   fi
 
-  # Step 11 — Bootloader
-  install_bootloader
-
-  # Step 12 — Enable first-boot wizard
+  # Step 11 — Enable first-boot wizard
   enable_first_boot_wizard
+
+  # Step 12 — Bootloader
+  install_bootloader
 
   # Step 13 — Setup recovery environment
   setup_recovery_environment
@@ -233,25 +233,36 @@ enable_first_boot_wizard() {
   echo ""
   log_info "Enabling first-boot wizard..."
 
+  local wizard_src_dir="${SCRIPT_DIR}/../first-boot"
+  local wizard_dst_dir="/mnt/usr/share/altos/first-boot"
+  local steps_dst_dir="${wizard_dst_dir}/steps"
+
   if [[ "$DRY_RUN" == true ]]; then
-    log_info "[DRY] Would enable first-boot wizard for new user."
+    log_info "[DRY] Would copy first-boot wizard to target system."
+    log_info "[DRY] Would create KDE autostart entry and systemd fallback."
     echo -e "${BLUE}[DRY] Would enable first-boot wizard.${RESET}"
     return 0
   fi
 
-  local wizard_src="/usr/share/altos/first-boot/wizard.sh"
-  local autostart_dir="/mnt/home/${username}/.config/autostart"
-  local desktop_file="${autostart_dir}/altos-first-boot.desktop"
+  if [[ ! -d "$wizard_src_dir" ]]; then
+    log_warn "First-boot wizard source not found at $wizard_src_dir. Skipping."
+    echo -e "${YELLOW}[WARN] First-boot wizard source not found. Skipping.${RESET}"
+    return 0
+  fi
 
-  if [[ -f "$wizard_src" ]]; then
-    # Ensure wizard is available in target system
-    mkdir -p "/mnt/usr/share/altos/first-boot/steps"
-    cp -r "$wizard_src" "/mnt/usr/share/altos/first-boot/" 2>/dev/null || true
-    cp -r /usr/share/altos/first-boot/steps/* "/mnt/usr/share/altos/first-boot/steps/" 2>/dev/null || true
+  # Copy first-boot wizard and steps to target system
+  mkdir -p "$wizard_dst_dir"
+  cp -r "${wizard_src_dir}/"* "$wizard_dst_dir/" 2>/dev/null || true
+  chmod +x "$wizard_dst_dir"/*.sh 2>/dev/null || true
+  if [[ -d "$wizard_dst_dir/steps" ]]; then
+    chmod +x "$wizard_dst_dir/steps"/*.sh 2>/dev/null || true
+  fi
+  log_info "First-boot wizard copied to target system."
 
-    # Create KDE autostart entry for the new user
-    mkdir -p "$autostart_dir"
-    cat > "$desktop_file" <<EOF
+  # Create KDE autostart entry in /etc/skel for new users
+  local skel_autostart="/mnt/etc/skel/.config/autostart"
+  mkdir -p "$skel_autostart"
+  cat > "${skel_autostart}/altos-wizard.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=AltOS First Boot Wizard
@@ -261,14 +272,40 @@ Terminal=true
 Hidden=false
 X-GNOME-Autostart-enabled=true
 EOF
+
+  # Also create for the current user if home exists
+  local user_autostart="/mnt/home/${username}/.config/autostart"
+  if [[ -d "/mnt/home/${username}" ]]; then
+    mkdir -p "$user_autostart"
+    cp "${skel_autostart}/altos-wizard.desktop" "${user_autostart}/altos-wizard.desktop"
     chown -R "${username}:${username}" "/mnt/home/${username}/.config" 2>/dev/null || true
-    chmod +x "$wizard_src" 2>/dev/null || true
-    log_info "First-boot wizard enabled."
-    echo -e "${GREEN}[OK] First-boot wizard will run on first login.${RESET}"
-  else
-    log_warn "First-boot wizard not found at $wizard_src. Skipping."
-    echo -e "${YELLOW}[WARN] First-boot wizard source not found. Skipping.${RESET}"
   fi
+
+  # Create systemd fallback service
+  local systemd_dir="/mnt/etc/systemd/system"
+  mkdir -p "$systemd_dir"
+  cat > "${systemd_dir}/altos-first-boot.service" <<EOF
+[Unit]
+Description=AltOS First Boot Wizard
+After=graphical-session.target network.target
+ConditionPathExists=!/home/${username}/.config/altos/first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/altos/first-boot/wizard.sh
+User=${username}
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/${username}/.Xauthority
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+  # Enable the systemd service as fallback
+  arch-chroot /mnt systemctl enable altos-first-boot.service 2>/dev/null || true
+
+  log_info "First-boot wizard enabled (KDE autostart + systemd fallback)."
+  echo -e "${GREEN}[OK] First-boot wizard will run on first login.${RESET}"
 }
 
 setup_recovery_environment() {

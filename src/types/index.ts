@@ -55,3 +55,14 @@ export interface DownloadProgressEvent {
   percent: number;
   stage: string;
 }
+
+export interface VerificationCheck {
+  name: string;
+  passed: boolean;
+  details: string;
+}
+
+export interface VerificationStatus {
+  overall_pass: boolean;
+  checks: VerificationCheck[];
+}

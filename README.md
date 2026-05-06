@@ -154,6 +154,30 @@ pub enum InstallerError {
 | `start_installation` | Start the installation process |
 | `cancel_installation` | Cancel ongoing installation |
 | `calculate_estimated_time` | Calculate estimated installation time |
+| `verify_installation` | Verify staging completeness (partitions, ISO, config, rEFInd) |
+| `detect_altos_installation` | Check if AltOS is installed on this system |
+| `remove_altos_partitions` | Remove AltOS partitions and optionally expand C: |
+| `restore_windows_bootloader` | Restore Windows Boot Manager as default |
+| `remove_refind_files` | Remove rEFInd files from EFI partition |
+
+## Uninstalling AltOS
+
+To remove AltOS and restore your system to Windows-only:
+
+1. Open the AltOS Installer app
+2. Click **"Remove AltOS"** on the welcome screen
+3. Review what will be deleted and what will be kept
+4. Toggle **"Expand C: drive"** if you want to reclaim the space
+5. Type `REMOVE` in the confirmation field
+6. Click **"Remove AltOS"**
+
+The uninstaller will:
+- Delete the OSWORLDBOOT, Linux root, and Linux home partitions
+- Remove rEFInd and GRUB bootloader entries
+- Restore Windows Boot Manager as the default
+- Optionally expand your C: drive to reclaim space
+
+Your Windows files, personal documents, and installed applications will not be affected.
 
 ## License
 

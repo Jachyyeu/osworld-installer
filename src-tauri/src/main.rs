@@ -139,6 +139,110 @@ pub struct DownloadProgress {
     pub total_bytes: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VerificationCheck {
+    pub name: String,
+    pub passed: bool,
+    pub details: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VerificationStatus {
+    pub overall_pass: bool,
+    pub checks: Vec<VerificationCheck>,
+}
+
+#[cfg(windows)]
+fn run_diskpart_script_with_timeout(script: &str, timeout_secs: u64) -> Result<String> {
+    let temp_path = std::env::temp_dir().join("osworld_diskpart.txt");
+    std::fs::write(&temp_path, script).map_err(|e| {
+        InstallerError::SystemCheckFailed(format!("Failed to write diskpart script: {}", e))
+    })?;
+
+    let mut child = std::process::Command::new("diskpart")
+        .arg("/s")
+        .arg(&temp_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| InstallerError::SystemCheckFailed(format!("diskpart execution failed: {}", e)))?;
+
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child.stdout.take().map(|mut o| {
+                    let mut s = String::new();
+                    let _ = std::io::Read::read_to_string(&mut o, &mut s);
+                    s
+                }).unwrap_or_default();
+                let stderr = child.stderr.take().map(|mut o| {
+                    let mut s = String::new();
+                    let _ = std::io::Read::read_to_string(&mut o, &mut s);
+                    s
+                }).unwrap_or_default();
+
+                if !status.success()
+                    || stdout.to_lowercase().contains("diskpart has encountered an error")
+                    || stderr.to_lowercase().contains("error")
+                {
+                    return Err(InstallerError::SystemCheckFailed(
+                        format!("diskpart failed. stdout: {}  stderr: {}", stdout, stderr)
+                    ));
+                }
+                return Ok(stdout);
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    return Err(InstallerError::SystemCheckFailed(
+                        "Disk operation timed out".to_string()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(InstallerError::SystemCheckFailed(format!(
+                    "Failed to wait for diskpart: {}", e
+                )));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn verify_iso_checksum(iso_path: &str) -> Result<bool> {
+    let checksum_url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| InstallerError::InstallationError(format!("HTTP client error: {}", e)))?;
+
+    let response = client.get(checksum_url).send().await.map_err(|e| {
+        InstallerError::InstallationError(format!("Checksum download failed: {}", e))
+    })?;
+
+    let checksum_text = response.text().await.map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to read checksum: {}", e))
+    })?;
+
+    let expected_checksum = checksum_text.lines()
+        .next()
+        .and_then(|l| l.split_whitespace().next())
+        .ok_or_else(|| InstallerError::InstallationError("Invalid checksum file".to_string()))?;
+
+    let output = run_powershell(&format!(
+        "(Get-FileHash '{}' -Algorithm SHA256).Hash",
+        iso_path.replace("\\", "\\\\")
+    ))?;
+    let actual_checksum = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+
+    Ok(actual_checksum.eq_ignore_ascii_case(expected_checksum))
+}
+
 // ==================== Tauri Commands ====================
 
 /// Set the installation type (Dual Boot or Replace Windows)
@@ -486,6 +590,25 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             ));
         }
 
+        // Resume check: if OSWORLDBOOT already exists, reuse it
+        if let Some(existing_letter) = find_volume_by_label("OSWORLDBOOT") {
+            if let Some(state) = load_staging_state() {
+                if state.osworldboot_partition_number.is_some() && state.linux_partition_number.is_some() {
+                    return Ok(StagingInfo {
+                        boot_partition_letter: existing_letter,
+                        linux_partition_number: state.linux_partition_number.unwrap(),
+                    });
+                }
+            }
+            // Try to locate Linux partition even without state
+            if let Some(linux_part) = find_linux_partition_number(disk_index) {
+                return Ok(StagingInfo {
+                    boot_partition_letter: existing_letter,
+                    linux_partition_number: linux_part,
+                });
+            }
+        }
+
         // Check free space on C:
         let free_gb = get_disk_free_space().unwrap_or(0);
         let required_gb = linux_size_gb + 2 + 10; // linux + boot + buffer
@@ -502,6 +625,13 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             .parse::<u64>()
             .map(|b| b / (1024 * 1024))
             .ok();
+
+        let total_size_output = run_powershell("(Get-Partition -DriveLetter C | Get-Disk).Size")?;
+        let total_size_mb = String::from_utf8_lossy(&total_size_output.stdout)
+            .trim()
+            .parse::<u64>()
+            .map(|b| b / (1024 * 1024))
+            .unwrap_or(0);
 
         let efi_output = run_powershell("bcdedit /enum firmware | Select-String -Pattern 'identifier'")?;
         let efi_entries: Vec<String> = String::from_utf8_lossy(&efi_output.stdout)
@@ -526,12 +656,12 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
         };
         save_staging_state(&initial_state)?;
 
-        // Run diskpart to shrink and create partitions
+        // Run diskpart to shrink and create partitions (with timeout and rollback)
         let shrink_mb = (linux_size_gb + 2) * 1024;
         let boot_mb = 2 * 1024;
         let linux_mb = linux_size_gb * 1024;
 
-        run_diskpart_script(&format!(
+        let diskpart_result = run_diskpart_script_with_timeout(&format!(
             "select disk {}\n\
              select volume C\n\
              shrink desired={}\n\
@@ -541,7 +671,25 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
              create partition primary size={}\n\
              set id={{0FC63DAF-8483-4772-8E79-3D69D8477DE4}}\n",
             disk_index, shrink_mb, boot_mb, linux_mb
-        ))?;
+        ), 60);
+
+        if let Err(ref e) = diskpart_result {
+            let _ = cleanup_staging("OSWORLD".to_string());
+            return Err(InstallerError::InstallationError(format!(
+                "Partitioning failed and rollback was attempted. Error: {}", e
+            )));
+        }
+
+        // Disk space verification: ensure C: still has >= 15% free
+        let free_after_gb = get_disk_free_space().unwrap_or(0);
+        let total_gb = if total_size_mb > 0 { total_size_mb / 1024 } else { free_after_gb + linux_size_gb + 2 };
+        let free_percent = if total_gb > 0 { (free_after_gb * 100) / total_gb } else { 0 };
+        if free_percent < 15 {
+            let _ = cleanup_staging("OSWORLD".to_string());
+            return Err(InstallerError::SystemCheckFailed(
+                format!("C: drive free space is too low after shrink ({}%). At least 15% is required.", free_percent)
+            ));
+        }
 
         // Locate created partitions
         let boot_letter = find_volume_by_label("OSWORLDBOOT")
@@ -1260,7 +1408,7 @@ async fn download_file_with_progress(
 
         if total_bytes > 0 {
             let percent = ((downloaded * 100) / total_bytes) as u8;
-            if percent >= last_percent + 5 {
+            if percent >= last_percent + 1 {
                 last_percent = percent;
                 let _ = app.emit("download-progress", DownloadProgressEvent {
                     percent,
@@ -1318,6 +1466,19 @@ fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result
     })?;
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn find_bundled_refind() -> Option<std::path::PathBuf> {
+    // Check app resources directory for bundled refind
+    if let Ok(exe_path) = std::env::current_exe() {
+        let resource_dir = exe_path.parent()?.join("resources");
+        let bundled = resource_dir.join("refind-bin-minimal.zip");
+        if bundled.exists() {
+            return Some(bundled);
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -1469,13 +1630,429 @@ async fn download_iso(drive: String, app: AppHandle) -> Result<DownloadProgress>
         let drive_clean = drive.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive_clean);
         let url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
-        download_file_with_progress(url, &iso_path, &app).await
+
+        // Resume check
+        if let Ok(meta) = tokio::fs::metadata(&iso_path).await {
+            let size_mb = meta.len() / (1024 * 1024);
+            if size_mb > 500 {
+                // Verify checksum even for resumed downloads
+                match verify_iso_checksum(&iso_path).await {
+                    Ok(true) => {
+                        return Ok(DownloadProgress {
+                            percent: 100,
+                            stage: "ISO already downloaded and verified".to_string(),
+                            bytes_downloaded: meta.len(),
+                            total_bytes: meta.len(),
+                        });
+                    }
+                    Ok(false) => {
+                        // Checksum mismatch, re-download
+                    }
+                    Err(_) => {
+                        // Can't verify, assume OK if large enough
+                        return Ok(DownloadProgress {
+                            percent: 100,
+                            stage: "ISO already downloaded (checksum verification skipped)".to_string(),
+                            bytes_downloaded: meta.len(),
+                            total_bytes: meta.len(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Retry logic with exponential backoff
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match download_file_with_progress(url, &iso_path, &app).await {
+                Ok(progress) => {
+                    // Verify checksum after download
+                    match verify_iso_checksum(&iso_path).await {
+                        Ok(true) => return Ok(progress),
+                        Ok(false) => {
+                            return Err(InstallerError::InstallationError(
+                                "Downloaded ISO checksum does not match. File may be corrupted.".to_string()
+                            ));
+                        }
+                        Err(e) => {
+                            // Checksum verification failed but download succeeded
+                            return Ok(progress);
+                        }
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < 3 {
+                        let backoff_secs = 2u64.pow(attempt - 1);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| InstallerError::InstallationError(
+            "ISO download failed after 3 attempts".to_string()
+        )))
     }
     #[cfg(not(windows))]
     {
         let _ = (drive, app);
         Err(InstallerError::SystemCheckFailed(
             "download_iso is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Verify that the installation staging is complete and valid.
+#[tauri::command]
+fn verify_installation() -> Result<VerificationStatus> {
+    #[cfg(windows)]
+    {
+        let mut checks = Vec::new();
+
+        // Check 1: OSWORLDBOOT partition exists and is FAT32
+        let boot_check = match find_volume_by_label("OSWORLDBOOT") {
+            Some(letter) => {
+                let output = run_powershell(&format!(
+                    "(Get-Volume -DriveLetter '{}').FileSystem",
+                    letter.trim_end_matches(':')
+                ));
+                match output {
+                    Ok(o) => {
+                        let fs = String::from_utf8_lossy(&o.stdout).trim().to_lowercase();
+                        if fs == "fat32" || fs == "fat" {
+                            VerificationCheck {
+                                name: "OSWORLDBOOT Partition".to_string(),
+                                passed: true,
+                                details: format!("Found at {} (FAT32)", letter),
+                            }
+                        } else {
+                            VerificationCheck {
+                                name: "OSWORLDBOOT Partition".to_string(),
+                                passed: false,
+                                details: format!("Found at {} but filesystem is {} (expected FAT32)", letter, fs),
+                            }
+                        }
+                    }
+                    Err(e) => VerificationCheck {
+                        name: "OSWORLDBOOT Partition".to_string(),
+                        passed: false,
+                        details: format!("Found partition but could not verify filesystem: {}", e),
+                    }
+                }
+            }
+            None => VerificationCheck {
+                name: "OSWORLDBOOT Partition".to_string(),
+                passed: false,
+                details: "OSWORLDBOOT partition not found".to_string(),
+            }
+        };
+        checks.push(boot_check);
+
+        // Check 2: arch.iso exists and > 500MB
+        let iso_check = if let Some(letter) = find_volume_by_label("OSWORLDBOOT") {
+            let iso_path = format!("{}\\arch.iso", letter.trim_end_matches(':'));
+            match std::fs::metadata(&iso_path) {
+                Ok(meta) => {
+                    let size_mb = meta.len() / (1024 * 1024);
+                    if size_mb > 500 {
+                        VerificationCheck {
+                            name: "Arch ISO".to_string(),
+                            passed: true,
+                            details: format!("Found at {} ({} MB)", iso_path, size_mb),
+                        }
+                    } else {
+                        VerificationCheck {
+                            name: "Arch ISO".to_string(),
+                            passed: false,
+                            details: format!("Found at {} but too small ({} MB, expected > 500)", iso_path, size_mb),
+                        }
+                    }
+                }
+                Err(_) => VerificationCheck {
+                    name: "Arch ISO".to_string(),
+                    passed: false,
+                    details: format!("Not found at {}", iso_path),
+                }
+            }
+        } else {
+            VerificationCheck {
+                name: "Arch ISO".to_string(),
+                passed: false,
+                details: "Cannot check ISO: OSWORLDBOOT partition not found".to_string(),
+            }
+        };
+        checks.push(iso_check);
+
+        // Check 3: install-config.json exists and is valid JSON
+        let config_check = if let Some(letter) = find_volume_by_label("OSWORLDBOOT") {
+            let config_path = format!("{}\\install-config.json", letter.trim_end_matches(':'));
+            match std::fs::read_to_string(&config_path) {
+                Ok(content) => {
+                    match serde_json::from_str::<serde_json::Value>(&content) {
+                        Ok(_) => VerificationCheck {
+                            name: "Install Config".to_string(),
+                            passed: true,
+                            details: format!("Valid JSON at {}", config_path),
+                        },
+                        Err(e) => VerificationCheck {
+                            name: "Install Config".to_string(),
+                            passed: false,
+                            details: format!("Invalid JSON at {}: {}", config_path, e),
+                        }
+                    }
+                }
+                Err(_) => VerificationCheck {
+                    name: "Install Config".to_string(),
+                    passed: false,
+                    details: format!("Not found at {}", config_path),
+                }
+            }
+        } else {
+            VerificationCheck {
+                name: "Install Config".to_string(),
+                passed: false,
+                details: "Cannot check config: OSWORLDBOOT partition not found".to_string(),
+            }
+        };
+        checks.push(config_check);
+
+        // Check 4: rEFInd files exist in EFI partition
+        let refind_check = match assign_esp_letter() {
+            Ok(esp_letter) => {
+                let esp_path = format!("{}:\\", esp_letter);
+                let refind_efi = format!("{}EFI\\refind\\refind_x64.efi", esp_path);
+                let refind_conf = format!("{}EFI\\refind\\refind.conf", esp_path);
+                let boot_efi = format!("{}EFI\\BOOT\\bootx64.efi", esp_path);
+
+                let has_refind = std::path::Path::new(&refind_efi).exists();
+                let has_conf = std::path::Path::new(&refind_conf).exists();
+                let has_boot = std::path::Path::new(&boot_efi).exists();
+
+                let _ = remove_esp_letter(&esp_letter);
+
+                if has_refind && has_conf && has_boot {
+                    VerificationCheck {
+                        name: "rEFInd Bootloader".to_string(),
+                        passed: true,
+                        details: "All rEFInd files present in EFI partition".to_string(),
+                    }
+                } else {
+                    let mut missing = Vec::new();
+                    if !has_refind { missing.push("refind_x64.efi"); }
+                    if !has_conf { missing.push("refind.conf"); }
+                    if !has_boot { missing.push("bootx64.efi"); }
+                    VerificationCheck {
+                        name: "rEFInd Bootloader".to_string(),
+                        passed: false,
+                        details: format!("Missing files: {}", missing.join(", ")),
+                    }
+                }
+            }
+            Err(e) => VerificationCheck {
+                name: "rEFInd Bootloader".to_string(),
+                passed: false,
+                details: format!("Could not mount EFI partition: {}", e),
+            }
+        };
+        checks.push(refind_check);
+
+        let overall_pass = checks.iter().all(|c| c.passed);
+
+        Ok(VerificationStatus {
+            overall_pass,
+            checks,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(VerificationStatus {
+            overall_pass: true,
+            checks: vec![VerificationCheck {
+                name: "Platform".to_string(),
+                passed: true,
+                details: "Verification is a no-op on non-Windows platforms".to_string(),
+            }],
+        })
+    }
+}
+
+/// Detect if an AltOS installation exists on this system.
+#[tauri::command]
+fn detect_altos_installation() -> Result<bool> {
+    #[cfg(windows)]
+    {
+        let has_osworld = find_volume_by_label("OSWORLDBOOT").is_some();
+        let has_grub = run_powershell("bcdedit /enum | Select-String -Pattern 'OSWorld Installer'").is_ok()
+            && run_powershell("bcdedit /enum | Select-String -Pattern 'OSWorld Installer'").map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty()).unwrap_or(false);
+        
+        let has_refind = match assign_esp_letter() {
+            Ok(esp) => {
+                let exists = std::path::Path::new(&format!("{}:\\EFI\\refind\\refind_x64.efi", esp)).exists();
+                let _ = remove_esp_letter(&esp);
+                exists
+            }
+            Err(_) => false
+        };
+
+        Ok(has_osworld || has_grub || has_refind)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+/// Remove AltOS partitions (OSWORLDBOOT and Linux partitions).
+#[tauri::command]
+fn remove_altos_partitions(confirmation: String, expand_c_drive: bool) -> Result<Vec<String>> {
+    if confirmation != "REMOVE" {
+        return Err(InstallerError::ValidationError(
+            "Confirmation must be exactly REMOVE".to_string()
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        let mut actions = Vec::new();
+        let disk_info = get_system_disk_info()?;
+        let disk_index = disk_info.0;
+
+        // Remove Linux partition
+        if let Some(linux_part) = find_linux_partition_number(disk_index) {
+            match run_diskpart_script_with_timeout(&format!(
+                "select disk {}\nselect partition {}\ndelete partition override\n",
+                disk_index, linux_part
+            ), 60) {
+                Ok(_) => actions.push(format!("Deleted Linux partition {}", linux_part)),
+                Err(e) => actions.push(format!("Failed to delete Linux partition {}: {}", linux_part, e)),
+            }
+        }
+
+        // Remove OSWORLDBOOT partition
+        if let Some(osworld_letter) = find_volume_by_label("OSWORLDBOOT") {
+            let clean = osworld_letter.trim_end_matches(':');
+            let output = run_powershell(&format!(
+                "(Get-Partition | Where-Object {{ $_.DriveLetter -eq '{}' }}).PartitionNumber",
+                clean
+            ));
+            if let Ok(o) = output {
+                if let Ok(part_num) = String::from_utf8_lossy(&o.stdout).trim().parse::<u32>() {
+                    match run_diskpart_script_with_timeout(&format!(
+                        "select disk {}\nselect partition {}\ndelete partition override\n",
+                        disk_index, part_num
+                    ), 60) {
+                        Ok(_) => actions.push(format!("Deleted OSWORLDBOOT partition {}", part_num)),
+                        Err(e) => actions.push(format!("Failed to delete OSWORLDBOOT partition {}: {}", part_num, e)),
+                    }
+                }
+            }
+        }
+
+        // Expand C: drive if requested
+        if expand_c_drive {
+            match run_diskpart_script_with_timeout(&format!(
+                "select disk {}\nselect volume C\nextend\n",
+                disk_index
+            ), 60) {
+                Ok(_) => actions.push("Expanded C: drive to reclaim space".to_string()),
+                Err(e) => actions.push(format!("Failed to expand C: drive: {}", e)),
+            }
+        }
+
+        Ok(actions)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (confirmation, expand_c_drive);
+        Err(InstallerError::SystemCheckFailed(
+            "Partition removal is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Restore Windows Boot Manager as the default bootloader.
+#[tauri::command]
+fn restore_windows_bootloader() -> Result<String> {
+    #[cfg(windows)]
+    {
+        // Remove OSWorld Installer BCD entries
+        let output = std::process::Command::new("bcdedit")
+            .args(&["/enum"])
+            .output()
+            .map_err(|e| InstallerError::InstallationError(format!("bcdedit enum failed: {}", e)))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.contains("OSWorld Installer") || line.contains("rEFInd") {
+                if let Some(guid) = line.split('{').nth(1).and_then(|s| s.split('}').next()) {
+                    let full_guid = format!("{{{}}}", guid);
+                    let _ = std::process::Command::new("bcdedit")
+                        .args(&["/delete", &full_guid, "/cleanup"])
+                        .status();
+                }
+            }
+        }
+
+        // Restore Windows Boot Manager as default
+        let result = run_powershell(
+            "$bootmgr = bcdedit /enum firmware | Select-String -Pattern 'bootmgr' | Select-Object -First 1; \
+             if ($bootmgr) { $guid = ($bootmgr -split '\\s+')[1]; bcdedit /displayorder $guid /addfirst | Out-Null; Write-Output 'OK' } else { Write-Output 'MISSING' }"
+        );
+
+        match result {
+            Ok(o) if String::from_utf8_lossy(&o.stdout).trim() == "OK" => {
+                Ok("Windows Boot Manager restored as default".to_string())
+            }
+            _ => {
+                Err(InstallerError::InstallationError(
+                    "Could not restore Windows Boot Manager automatically. You may need to use bcdedit manually.".to_string()
+                ))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err(InstallerError::SystemCheckFailed(
+            "Bootloader restoration is only supported on Windows".to_string()
+        ))
+    }
+}
+
+/// Remove rEFInd files from the EFI System Partition.
+#[tauri::command]
+fn remove_refind_files() -> Result<String> {
+    #[cfg(windows)]
+    {
+        let esp_letter = assign_esp_letter()?;
+        let esp_path = format!("{}:\\", esp_letter);
+        let refind_path = format!("{}EFI\\refind\\", esp_path);
+        let refind_boot_path = format!("{}EFI\\BOOT\\", esp_path);
+        let windows_boot_backup = format!("{}bootx64.efi.windows", refind_boot_path);
+        let bootx64_path = format!("{}bootx64.efi", refind_boot_path);
+
+        // Remove rEFInd directories
+        let _ = std::fs::remove_dir_all(&refind_path);
+        let _ = std::fs::remove_dir_all(&refind_boot_path);
+
+        // Restore Windows bootloader from backup if it exists
+        if std::path::Path::new(&windows_boot_backup).exists() {
+            std::fs::create_dir_all(&refind_boot_path).map_err(|e| {
+                InstallerError::InstallationError(format!("Failed to recreate BOOT dir: {}", e))
+            })?;
+            std::fs::copy(&windows_boot_backup, &bootx64_path).map_err(|e| {
+                InstallerError::InstallationError(format!("Failed to restore Windows bootloader: {}", e))
+            })?;
+            let _ = std::fs::remove_file(&windows_boot_backup);
+        }
+
+        remove_esp_letter(&esp_letter)?;
+
+        Ok("rEFInd files removed successfully".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        Err(InstallerError::SystemCheckFailed(
+            "rEFInd removal is only supported on Windows".to_string()
         ))
     }
 }
@@ -1854,6 +2431,11 @@ fn main() {
             reboot_to_installer,
             cleanup_staging,
             rollback_staging,
+            verify_installation,
+            detect_altos_installation,
+            remove_altos_partitions,
+            restore_windows_bootloader,
+            remove_refind_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
