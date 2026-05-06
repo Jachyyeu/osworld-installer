@@ -142,11 +142,11 @@ get_partitions() {
     fi
   else
     # In wipe mode: find the NEW EFI partition we just created
-    EFI_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="EFI System Partition" {print "/dev/" $1}')
+    EFI_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="EFI System Partition" {print "/dev/" $1}' || true)
   fi
 
-  ROOT_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="Linux Root" {print "/dev/" $1}')
-  HOME_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="Linux Home" {print "/dev/" $1}')
+  ROOT_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="Linux Root" {print "/dev/" $1}' || true)
+  HOME_PART=$(lsblk -rno NAME,PARTLABEL "$disk" 2>/dev/null | awk '$2=="Linux Home" {print "/dev/" $1}' || true)
 
   echo -e "${GREEN}[OK] EFI  partition: ${EFI_PART:-<not found>}${RESET}"
   echo -e "${GREEN}[OK] Root partition: ${ROOT_PART:-<not found>}${RESET}"
