@@ -47,23 +47,29 @@ check_mounted() {
 verify_environment() {
   echo -e "${BLUE}[INFO] Verifying installation environment...${RESET}"
 
-  # Must be root
-  if [[ "$EUID" -ne 0 ]]; then
+  # Must be root (skipped in dry-run for testing)
+  if [[ "$DRY_RUN" == true ]]; then
+    echo -e "${YELLOW}[WARN] Skipping root check in dry-run mode.${RESET}"
+  elif [[ "$EUID" -ne 0 ]]; then
     echo -e "${RED}[FAIL] This script must be run as root (use sudo).${RESET}"
     exit 1
   fi
   echo -e "${GREEN}[OK] Running as root.${RESET}"
 
-  # UEFI only
-  if [[ ! -d /sys/firmware/efi/efivars ]]; then
+  # UEFI only (skipped in dry-run for testing)
+  if [[ "$DRY_RUN" == true ]]; then
+    echo -e "${YELLOW}[WARN] Skipping UEFI check in dry-run mode.${RESET}"
+  elif [[ ! -d /sys/firmware/efi/efivars ]]; then
     echo -e "${RED}[FAIL] UEFI mode not detected.${RESET}"
     echo -e "${RED}[FAIL] This installer only supports UEFI systems.${RESET}"
     exit 1
   fi
   echo -e "${GREEN}[OK] UEFI mode detected.${RESET}"
 
-  # Internet connection
-  if ! ping -c 1 -W 5 archlinux.org &>/dev/null; then
+  # Internet connection (skipped in dry-run for testing)
+  if [[ "$DRY_RUN" == true ]]; then
+    echo -e "${YELLOW}[WARN] Skipping network check in dry-run mode.${RESET}"
+  elif ! ping -c 1 -W 5 archlinux.org &>/dev/null; then
     echo -e "${RED}[FAIL] Internet connection not detected.${RESET}"
     echo -e "${RED}[FAIL] Cannot download packages. Check your network.${RESET}"
     exit 1
