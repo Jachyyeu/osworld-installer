@@ -77,6 +77,15 @@ fi
 
 echo -e "${GREEN}[OK] Config copied and validated.${RESET}"
 
+# --- Copy Secure Boot staging files if present ---------------
+STAGED_SB="${MOUNT_POINT}/secureboot"
+if [[ -d "$STAGED_SB" ]]; then
+  echo -e "${BLUE}[INFO] Copying Secure Boot staging files...${RESET}"
+  mkdir -p /tmp/secureboot
+  cp -r "${STAGED_SB}"/* /tmp/secureboot/
+  echo -e "${GREEN}[OK] Secure Boot files copied.${RESET}"
+fi
+
 echo -e "${BLUE}[INFO] Unmounting ${MOUNT_POINT}...${RESET}"
 umount "$MOUNT_POINT"
 echo -e "${GREEN}[OK] Unmounted.${RESET}"

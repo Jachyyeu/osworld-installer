@@ -1,7 +1,7 @@
 // Tauri API helper functions
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, StagingInfo, DownloadProgress, DownloadProgressEvent } from '../types';
+import type { InstallConfig, SystemInfo, DiskInfo, InstallProgress, InstallType, StagingInfo, DownloadProgress, DownloadProgressEvent, PcManufacturerInfo } from '../types';
 
 // Invoke commands with proper typing
 export async function setInstallType(installType: InstallType): Promise<void> {
@@ -20,12 +20,26 @@ export async function detectSystemInfo(): Promise<SystemInfo> {
   return invoke('detect_system_info');
 }
 
+export async function detectPcManufacturer(): Promise<PcManufacturerInfo> {
+  return invoke('detect_pc_manufacturer');
+}
+
+export async function setSecureBootStrategy(strategy: string): Promise<void> {
+  return invoke('set_secure_boot_strategy', { strategy });
+}
+
 export async function getAvailableDisks(): Promise<DiskInfo[]> {
   return invoke('get_available_disks');
 }
 
-export async function setDiskConfig(diskName: string, linuxSizeGb: number): Promise<void> {
-  return invoke('set_disk_config', { diskName, linuxSizeGb });
+export async function setDiskConfig(
+  diskName: string,
+  linuxSizeGb: number,
+  filesystem?: string,
+  encrypt?: boolean,
+  luksPassword?: string
+): Promise<void> {
+  return invoke('set_disk_config', { diskName, linuxSizeGb, filesystem, encrypt, luksPassword });
 }
 
 export async function setUserConfig(

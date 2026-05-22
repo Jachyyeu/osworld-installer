@@ -18,9 +18,13 @@ pub struct InstallConfig {
     pub ram_gb: Option<u64>,
     pub cpu_info: Option<String>,
     pub secure_boot_enabled: Option<bool>,
+    pub secure_boot_strategy: Option<String>,
     pub bitlocker_enabled: Option<bool>,
     pub selected_disk: Option<String>,
     pub linux_size_gb: Option<u64>,
+    pub filesystem: Option<String>,
+    pub encrypt: Option<bool>,
+    pub luks_password: Option<String>,
     pub username: Option<String>,
     pub computer_name: Option<String>,
     pub password: Option<String>,
@@ -68,7 +72,16 @@ pub struct SystemInfo {
     pub ram_gb: u64,
     pub cpu_info: String,
     pub secure_boot_enabled: bool,
+    pub secure_boot_strategy: Option<String>,
     pub bitlocker_enabled: bool,
+}
+
+// PC Manufacturer information structure
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PcManufacturerInfo {
+    pub manufacturer: String,
+    pub boot_menu_key: String,
+    pub bios_key: String,
 }
 
 // Disk information structure
@@ -292,7 +305,7 @@ fn save_config_to_json(path: String, state: State<AppState>) -> Result<()> {
 
 /// Detect system information (Windows version, RAM, CPU, etc.)
 #[tauri::command]
-async fn detect_system_info() -> Result<SystemInfo> {
+async fn detect_system_info(state: State<'_, AppState>) -> Result<SystemInfo> {
     // Use sysinfo to get system information
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
@@ -314,6 +327,17 @@ async fn detect_system_info() -> Result<SystemInfo> {
     // Check Secure Boot status from Registry
     let secure_boot_enabled = check_secure_boot().unwrap_or(false);
     
+    // When Secure Boot is enabled, auto-set the MOK enrollment strategy
+    let secure_boot_strategy = if secure_boot_enabled {
+        let strategy = Some("mok_enrollment".to_string());
+        if let Ok(mut config) = state.config.lock() {
+            config.secure_boot_strategy = strategy.clone();
+        }
+        strategy
+    } else {
+        None
+    };
+    
     // Check BitLocker status via WMI
     let bitlocker_enabled = check_bitlocker().unwrap_or(false);
     
@@ -323,8 +347,83 @@ async fn detect_system_info() -> Result<SystemInfo> {
         ram_gb,
         cpu_info,
         secure_boot_enabled,
+        secure_boot_strategy,
         bitlocker_enabled,
     })
+}
+
+/// Manually set the Secure Boot strategy (for testing or overrides)
+#[tauri::command]
+fn set_secure_boot_strategy(strategy: String, state: State<AppState>) -> Result<()> {
+    let mut config = state.config.lock().map_err(|e| {
+        InstallerError::Unknown(format!("Failed to lock state: {}", e))
+    })?;
+    config.secure_boot_strategy = Some(strategy);
+    Ok(())
+}
+
+/// Detect PC manufacturer and return BIOS/boot menu keys
+#[tauri::command]
+async fn detect_pc_manufacturer() -> Result<PcManufacturerInfo> {
+    #[cfg(windows)]
+    {
+        use wmi::{COMLibrary, WMIConnection};
+        use serde::Deserialize;
+
+        #[derive(Deserialize, Debug)]
+        struct Win32ComputerSystem {
+            #[serde(rename = "Manufacturer")]
+            manufacturer: String,
+        }
+
+        let com = COMLibrary::new().map_err(|e| {
+            InstallerError::SystemCheckFailed(format!("COM init failed: {}", e))
+        })?;
+
+        let wmi = WMIConnection::new(com).map_err(|e| {
+            InstallerError::SystemCheckFailed(format!("WMI connection failed: {}", e))
+        })?;
+
+        let systems: Vec<Win32ComputerSystem> = wmi
+            .raw_query("SELECT Manufacturer FROM Win32_ComputerSystem")
+            .map_err(|e| InstallerError::SystemCheckFailed(format!("WMI query failed: {}", e)))?;
+
+        let raw_manufacturer = systems
+            .first()
+            .map(|s| s.manufacturer.trim().to_string())
+            .unwrap_or_else(|| "Generic".to_string());
+
+        let manufacturer_lower = raw_manufacturer.to_lowercase();
+        let (manufacturer, boot_menu_key, bios_key) = if manufacturer_lower.contains("dell") {
+            ("Dell".to_string(), "F12".to_string(), "F2".to_string())
+        } else if manufacturer_lower.contains("hp") || manufacturer_lower.contains("hewlett") {
+            ("HP".to_string(), "F10".to_string(), "ESC".to_string())
+        } else if manufacturer_lower.contains("lenovo") {
+            ("Lenovo".to_string(), "F12".to_string(), "F1".to_string())
+        } else if manufacturer_lower.contains("asus") {
+            ("ASUS".to_string(), "F8 or ESC".to_string(), "DEL".to_string())
+        } else if manufacturer_lower.contains("acer") {
+            ("Acer".to_string(), "F12".to_string(), "DEL".to_string())
+        } else if manufacturer_lower.contains("msi") || manufacturer_lower.contains("micro-star") {
+            ("MSI".to_string(), "F11".to_string(), "DEL".to_string())
+        } else {
+            ("Generic".to_string(), "F2, F10, F12".to_string(), "DEL".to_string())
+        };
+
+        Ok(PcManufacturerInfo {
+            manufacturer,
+            boot_menu_key,
+            bios_key,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(PcManufacturerInfo {
+            manufacturer: "Generic".to_string(),
+            boot_menu_key: "F2, F10, F12".to_string(),
+            bios_key: "DEL".to_string(),
+        })
+    }
 }
 
 /// Get list of available disks
@@ -503,6 +602,29 @@ fn set_user_config(
     config.username = Some(username);
     config.computer_name = Some(computer_name);
     config.password = Some(password);
+    
+    Ok(())
+}
+
+/// Save disk configuration (selected disk, size, filesystem, encryption)
+#[tauri::command]
+fn set_disk_config(
+    disk_name: String,
+    linux_size_gb: u64,
+    filesystem: Option<String>,
+    encrypt: Option<bool>,
+    luks_password: Option<String>,
+    state: State<AppState>,
+) -> Result<()> {
+    let mut config = state.config.lock().map_err(|e| {
+        InstallerError::Unknown(format!("Failed to lock state: {}", e))
+    })?;
+    
+    config.selected_disk = Some(disk_name);
+    config.linux_size_gb = Some(linux_size_gb);
+    config.filesystem = filesystem;
+    config.encrypt = encrypt;
+    config.luks_password = luks_password;
     
     Ok(())
 }
@@ -717,6 +839,20 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
         };
         save_staging_state(&updated_state)?;
 
+        // --- Secure Boot shim/MOK staging ---
+        // If Secure Boot is enabled and we're using the MOK enrollment strategy,
+        // download shim-signed binaries and generate a one-time MOK keypair
+        // on the OSWORLDBOOT partition so the Live ISO installer can sign
+        // rEFInd + the kernel and enroll the key via MokManager.
+        //
+        // Secure Boot chain on the installed system:
+        //   Firmware → shim (Microsoft-signed) → signed rEFInd → signed kernel
+        if config.secure_boot_enabled == Some(true)
+            && config.secure_boot_strategy.as_deref() == Some("mok_enrollment")
+        {
+            stage_secure_boot_files(&boot_letter)?;
+        }
+
         Ok(StagingInfo {
             boot_partition_letter: boot_letter,
             linux_partition_number: linux_part_num,
@@ -882,8 +1018,24 @@ menuentry "AltOS Recovery" {{
             InstallerError::InstallationError(format!("Failed to write refind.conf: {}", e))
         })?;
 
-        // Add BCD entry
-        add_refind_bcd_entry(&esp_letter)?;
+        // --- Secure Boot: install shim as the primary bootloader ---
+        // If shim files were staged on OSWORLDBOOT, copy them to the ESP and
+        // register shim (not refind directly) as the BCD boot entry.
+        // Chain: Firmware → shim → rEFInd → kernel
+        let secure_boot_staged = find_volume_by_label("OSWORLDBOOT")
+            .map(|letter| {
+                let flag = format!("{}\\secureboot\\enrollment-needed", letter.trim_end_matches(':'));
+                std::path::Path::new(&flag).exists()
+            })
+            .unwrap_or(false);
+
+        if secure_boot_staged {
+            install_shim_to_esp(&esp_letter, &refind_boot_path)?;
+            add_secure_boot_bcd_entry(&esp_letter)?;
+        } else {
+            // Standard (non-Secure-Boot) BCD entry
+            add_refind_bcd_entry(&esp_letter)?;
+        }
 
         // Remove temporary ESP letter
         remove_esp_letter(&esp_letter)?;
@@ -923,6 +1075,299 @@ fn reboot_to_installer() -> Result<()> {
             "Reboot is only supported on Windows".to_string()
         ))
     }
+}
+
+/// Mark the post-install onboarding as seen so it doesn't show again.
+#[tauri::command]
+fn mark_post_install_seen() -> Result<()> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let path = std::path::Path::new(&home).join(".config/altos/post-install-seen");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&path, "1").map_err(|e| {
+        InstallerError::Unknown(format!("Failed to write post-install marker: {}", e))
+    })?;
+    Ok(())
+}
+
+/// Set rEFInd default boot entry (AltOS or Windows).
+#[tauri::command]
+fn set_refind_default(enabled: bool) -> Result<()> {
+    #[cfg(not(windows))]
+    {
+        let conf_path = std::path::Path::new("/boot/efi/EFI/refind/refind.conf");
+        if !conf_path.exists() {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(conf_path).map_err(|e| {
+            InstallerError::InstallationError(format!("Failed to read refind.conf: {}", e))
+        })?;
+
+        let target = if enabled { "\"AltOS\"" } else { "\"Windows\"" };
+        let new_line = format!("default_selection {}", target);
+
+        let new_content = if content.contains("default_selection") {
+            content
+                .lines()
+                .map(|line| {
+                    if line.trim().starts_with("default_selection") {
+                        &new_line
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            format!("{}\n{}", new_line, content)
+        };
+
+        std::fs::write(conf_path, new_content).map_err(|e| {
+            InstallerError::InstallationError(format!("Failed to write refind.conf: {}", e))
+        })?;
+    }
+    #[cfg(windows)]
+    {
+        let _ = enabled;
+    }
+    Ok(())
+}
+
+// ==================== Secure Boot Helpers ====================
+
+/// Stage shim-signed binaries and a one-time MOK keypair onto the
+/// OSWORLDBOOT partition so the Live ISO installer can sign rEFInd
+/// and the kernel, then enroll the key via MokManager.
+#[cfg(windows)]
+fn stage_secure_boot_files(boot_letter: &str) -> Result<()> {
+    let drive = boot_letter.trim_end_matches(':');
+    let sb_dir = format!("{}:\\secureboot", drive);
+    std::fs::create_dir_all(&sb_dir).map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to create secureboot dir: {}", e))
+    })?;
+
+    // 1) Download shim-signed EFI binaries (Microsoft-signed)
+    download_shim_files(&sb_dir)?;
+
+    // 2) Generate a one-time MOK keypair with OpenSSL
+    generate_mok_keypair(&sb_dir)?;
+
+    // 3) Write the enrollment-needed flag so the Live ISO knows to run
+    //    the MOK enrollment flow after installing the system.
+    let flag_path = format!("{}:\\secureboot\\enrollment-needed", drive);
+    std::fs::write(&flag_path, "1").map_err(|e| {
+        InstallerError::InstallationError(format!("Failed to write enrollment flag: {}", e))
+    })?;
+
+    Ok(())
+}
+
+/// Download Microsoft-signed shim binaries.
+/// In production these should be bundled under resources/shim/ or
+/// self-hosted.  The URLs below are placeholders — replace them with
+/// your own trusted mirrors.
+#[cfg(windows)]
+fn download_shim_files(output_dir: &str) -> Result<()> {
+    // Try bundled files first (preferred — no network dependency)
+    if let Ok(exe_path) = std::env::current_exe() {
+        let bundled_dir = exe_path.parent().unwrap_or(std::path::Path::new(".")).join("resources/shim");
+        let files = ["shimx64.efi", "mmx64.efi", "fbx64.efi"];
+        let all_present = files.iter().all(|f| bundled_dir.join(f).exists());
+        if all_present {
+            for f in &files {
+                let src = bundled_dir.join(f);
+                let dst = std::path::Path::new(output_dir).join(f);
+                std::fs::copy(&src, &dst).map_err(|e| {
+                    InstallerError::InstallationError(format!("Failed to copy bundled shim file {}: {}", f, e))
+                })?;
+            }
+            return Ok(());
+        }
+    }
+
+    // Fallback: download from known URLs.
+    // IMPORTANT: Replace these placeholder URLs with actual hosted binaries
+    // before shipping.  The binaries must be the Microsoft-signed versions
+    // from a major distro (e.g. Ubuntu shim-signed or Fedora shim).
+    let downloads = vec![
+        (
+            "shimx64.efi",
+            "https://github.com/osworld-installer/shim-binaries/raw/main/shimx64.efi",
+        ),
+        (
+            "mmx64.efi",
+            "https://github.com/osworld-installer/shim-binaries/raw/main/mmx64.efi",
+        ),
+        (
+            "fbx64.efi",
+            "https://github.com/osworld-installer/shim-binaries/raw/main/fbx64.efi",
+        ),
+    ];
+
+    for (filename, url) in downloads {
+        let dst = std::path::Path::new(output_dir).join(filename);
+        // Use a simple blocking download via PowerShell / curl
+        let output = std::process::Command::new("powershell")
+            .args(&[
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-Command",
+                &format!(
+                    "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                    url,
+                    dst.to_string_lossy().replace("\\", "\\\\")
+                ),
+            ])
+            .output()
+            .map_err(|e| InstallerError::InstallationError(format!("Failed to download {}: {}", filename, e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(InstallerError::InstallationError(format!(
+                "Download of {} failed: {}", filename, stderr
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate a one-time MOK (Machine Owner Key) keypair using OpenSSL.
+/// The private key (MOK.key) and certificate (MOK.crt / MOK.cer) are
+/// written to the staging partition.  The Live ISO installer uses them
+/// to sign rEFInd and the kernel, then enrolls the certificate via
+/// mokutil so the firmware trusts the signatures.
+#[cfg(windows)]
+fn generate_mok_keypair(output_dir: &str) -> Result<()> {
+    // Verify openssl is available
+    let check = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-Command", "Get-Command openssl -ErrorAction SilentlyContinue"])
+        .output()
+        .map_err(|e| InstallerError::InstallationError(format!("Failed to check for openssl: {}", e)))?;
+
+    if !check.status.success() {
+        return Err(InstallerError::InstallationError(
+            "OpenSSL is required for Secure Boot MOK generation but was not found on this system. \
+             Please install OpenSSL or disable Secure Boot in BIOS.".to_string()
+        ));
+    }
+
+    let key_path = std::path::Path::new(output_dir).join("MOK.key");
+    let crt_path = std::path::Path::new(output_dir).join("MOK.crt");
+    let cer_path = std::path::Path::new(output_dir).join("MOK.cer");
+
+    // Generate self-signed certificate + private key
+    let gen_cmd = format!(
+        "openssl req -new -x509 -newkey rsa:2048 -keyout '{}' -out '{}' -nodes -days 3650 -subj \"/CN=AltOS Secure Boot/\"",
+        key_path.to_string_lossy().replace("\\", "\\\\"),
+        crt_path.to_string_lossy().replace("\\", "\\\\")
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &gen_cmd])
+        .output()
+        .map_err(|e| InstallerError::InstallationError(format!("OpenSSL key generation failed: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(InstallerError::InstallationError(format!(
+            "Failed to generate MOK keypair: {}", stderr
+        )));
+    }
+
+    // Convert CRT to DER (CER) for mokutil enrollment
+    let der_cmd = format!(
+        "openssl x509 -in '{}' -out '{}' -outform DER",
+        crt_path.to_string_lossy().replace("\\", "\\\\"),
+        cer_path.to_string_lossy().replace("\\", "\\\\")
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &der_cmd])
+        .output()
+        .map_err(|e| InstallerError::InstallationError(format!("OpenSSL DER conversion failed: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(InstallerError::InstallationError(format!(
+            "Failed to convert MOK certificate to DER: {}", stderr
+        )));
+    }
+
+    Ok(())
+}
+
+/// Copy shim binaries from OSWORLDBOOT to the ESP fallback directory.
+/// bootx64.efi is replaced with shimx64.efi so the firmware loads shim
+/// first.  mmx64.efi and fbx64.efi are copied alongside it.
+#[cfg(windows)]
+fn install_shim_to_esp(esp_letter: &str, boot_path: &str) -> Result<()> {
+    let boot_drive = find_volume_by_label("OSWORLDBOOT")
+        .ok_or_else(|| InstallerError::InstallationError(
+            "Could not find OSWORLDBOOT partition for shim files".to_string()
+        ))?;
+    let staging_drive = boot_drive.trim_end_matches(':');
+
+    // Copy shim, MokManager, and fallback binaries to EFI/BOOT
+    let files = [("shimx64.efi", "bootx64.efi"), ("mmx64.efi", "mmx64.efi"), ("fbx64.efi", "fbx64.efi")];
+    for (src_name, dst_name) in &files {
+        let src = format!("{}:\\secureboot\\{}", staging_drive, src_name);
+        let dst = format!("{}{}", boot_path, dst_name);
+        std::fs::copy(&src, &dst).map_err(|e| {
+            InstallerError::InstallationError(format!(
+                "Failed to copy {} to ESP: {}", src_name, e
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Add a BCD firmware entry that points to shim (not directly to rEFInd).
+/// When Secure Boot is enabled, the chain is:
+///   Firmware → shim (Microsoft-signed) → signed rEFInd → signed kernel
+#[cfg(windows)]
+fn add_secure_boot_bcd_entry(esp_letter: &str) -> Result<()> {
+    let l = esp_letter.trim_end_matches(':');
+
+    let output = std::process::Command::new("bcdedit")
+        .args(&["/copy", "{current}", "/d", "OSWorld Installer (Secure Boot)"])
+        .output()
+        .map_err(|e| InstallerError::InstallationError(format!("bcdedit failed: {}", e)))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let guid = stdout
+        .split('{')
+        .nth(1)
+        .and_then(|s| s.split('}').next())
+        .map(|s| format!("{{{}}}", s))
+        .ok_or_else(|| InstallerError::InstallationError(
+            "Failed to parse bcdedit GUID".to_string()
+        ))?;
+
+    let commands = vec![
+        // Point to shim instead of refind directly
+        format!("bcdedit /set {} path \\EFI\\BOOT\\shimx64.efi", guid),
+        format!("bcdedit /set {} device partition={}:", guid, l),
+        format!("bcdedit /displayorder {} /addfirst", guid),
+    ];
+
+    for cmd in commands {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        let status = std::process::Command::new(parts[0])
+            .args(&parts[1..])
+            .status()
+            .map_err(|e| InstallerError::InstallationError(format!("bcdedit command failed: {}", e)))?;
+
+        if !status.success() {
+            return Err(InstallerError::InstallationError(
+                format!("bcdedit command failed: {}", cmd)
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 // ==================== Helper Functions ====================
@@ -2418,8 +2863,11 @@ fn main() {
             get_config,
             save_config_to_json,
             detect_system_info,
+            detect_pc_manufacturer,
+            set_secure_boot_strategy,
             get_available_disks,
             set_user_config,
+            set_disk_config,
             start_installation,
             cancel_installation,
             calculate_estimated_time,
@@ -2436,6 +2884,8 @@ fn main() {
             remove_altos_partitions,
             restore_windows_bootloader,
             remove_refind_files,
+            mark_post_install_seen,
+            set_refind_default,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

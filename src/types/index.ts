@@ -9,9 +9,13 @@ export interface InstallConfig {
   ram_gb?: number;
   cpu_info?: string;
   secure_boot_enabled?: boolean;
+  secure_boot_strategy?: string;
   bitlocker_enabled?: boolean;
   selected_disk?: string;
   linux_size_gb?: number;
+  filesystem?: string;
+  encrypt?: boolean;
+  luks_password?: string;
   username?: string;
   computer_name?: string;
   password?: string;
@@ -23,7 +27,14 @@ export interface SystemInfo {
   ram_gb: number;
   cpu_info: string;
   secure_boot_enabled: boolean;
+  secure_boot_strategy?: string;
   bitlocker_enabled: boolean;
+}
+
+export interface PcManufacturerInfo {
+  manufacturer: string;
+  boot_menu_key: string;
+  bios_key: string;
 }
 
 export interface DiskInfo {

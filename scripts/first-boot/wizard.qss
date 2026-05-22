@@ -1,0 +1,73 @@
+/* ============================================================
+   AltOS First-Boot Wizard — QSS Stylesheet
+   Dark theme: slate-900 background, emerald-400 accents
+   ============================================================ */
+
+QMainWindow {
+    background: transparent;
+}
+
+QWidget {
+    font-family: "Inter", "Noto Sans", "Segoe UI", sans-serif;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background: #0f172a;
+    width: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background: #334155;
+    border-radius: 4px;
+    min-height: 40px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #475569;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    background: transparent;
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background: #0f172a;
+    height: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #334155;
+    border-radius: 4px;
+    min-width: 40px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #475569;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    background: transparent;
+    width: 0px;
+}
+
+/* ScrollArea */
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+
+/* Tooltips */
+QToolTip {
+    background-color: #1e293b;
+    color: #f1f5f9;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
