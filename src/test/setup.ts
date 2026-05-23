@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 import '@testing-library/jest-dom';
 
 window.matchMedia = window.matchMedia || function () {

@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 import type { InstallConfig } from './index';
 
 // This file verifies that InstallConfig accepts all optional fields.

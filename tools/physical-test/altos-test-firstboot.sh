@@ -71,7 +71,8 @@ EOF
 
 take_screenshot() {
     local name="$1"
-    local file="$SCREENSHOT_DIR/phase3-$name-$(date +%Y%m%d-%H%M%S).png"
+    local file
+    file="$SCREENSHOT_DIR/phase3-$name-$(date +%Y%m%d-%H%M%S).png"
     mkdir -p "$SCREENSHOT_DIR"
 
     if command -v spectacle &>/dev/null; then
