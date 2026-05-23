@@ -20,7 +20,6 @@ MOK_KEY="${STAGING_DIR}/MOK.key"
 MOK_CRT="${STAGING_DIR}/MOK.crt"
 MOK_CER="${STAGING_DIR}/MOK.cer"
 REFIND_EFI="${EFI_PARTITION}/EFI/refind/refind_x64.efi"
-SHIM_BOOT="${EFI_PARTITION}/EFI/BOOT/bootx64.efi"
 
 # ============================================================
 # Main entry

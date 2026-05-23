@@ -130,7 +130,6 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
 
     set +e
     "$TOOLS_DIR/apply-fix.sh" "$ERROR_TYPE" "--$MODE" > "$APPLY_LOG" 2>&1
-    APPLY_EXIT=$?
     set -e
 
     cat "$APPLY_LOG"

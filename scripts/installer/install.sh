@@ -235,7 +235,6 @@ enable_first_boot_wizard() {
 
   local wizard_src_dir="${SCRIPT_DIR}/../first-boot"
   local wizard_dst_dir="/mnt/usr/share/altos/first-boot"
-  local steps_dst_dir="${wizard_dst_dir}/steps"
 
   if [[ "$DRY_RUN" == true ]]; then
     log_info "[DRY] Would copy first-boot wizard to target system."

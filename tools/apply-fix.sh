@@ -9,8 +9,6 @@ ERROR_TYPE="${1:-}"
 MODE="${2:---dry-run}"
 
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$TOOLS_DIR")"
-INSTALLER_DIR="$PROJECT_DIR/scripts/installer"
 
 if [[ -z "$ERROR_TYPE" ]]; then
     cat <<EOF
