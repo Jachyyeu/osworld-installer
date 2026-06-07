@@ -12,6 +12,7 @@ vi.mock('../lib/tauri', () => ({
   getAvailableDisks: () => mockGetAvailableDisks(),
   setDiskConfig: (...args: unknown[]) => mockSetDiskConfig(...args),
   calculateEstimatedTime: (size: number) => mockCalculateEstimatedTime(size),
+  writeTestState: () => Promise.resolve(),
 }));
 
 describe('DiskSelectionWindow', () => {

@@ -1238,6 +1238,14 @@ fn reboot_to_installer() -> Result<()> {
     }
 }
 
+/// Write test state JSON to disk for automated UI testing
+#[tauri::command]
+fn write_test_state(path: String, json: String) -> Result<()> {
+    std::fs::write(&path, json)
+        .map_err(|e| InstallerError::Unknown(format!("Failed to write test state: {}", e)))?;
+    Ok(())
+}
+
 /// Mark the post-install onboarding as seen so it doesn't show again.
 #[tauri::command]
 fn mark_post_install_seen() -> Result<()> {
@@ -3195,6 +3203,7 @@ fn main() {
             remove_refind_files,
             mark_post_install_seen,
             set_refind_default,
+            write_test_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

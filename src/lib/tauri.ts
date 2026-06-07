@@ -129,6 +129,11 @@ export async function removeRefindFiles(): Promise<string> {
   return invoke('remove_refind_files');
 }
 
+// Test instrumentation
+export async function writeTestState(path: string, data: unknown): Promise<void> {
+  return invoke('write_test_state', { path, json: JSON.stringify(data) });
+}
+
 // Event listeners
 export function onInstallProgress(callback: (progress: InstallProgress) => void) {
   return listen<InstallProgress>('install-progress', (event) => {

@@ -14,6 +14,7 @@ const mockDetectPcManufacturer = vi.fn();
 vi.mock('../lib/tauri', () => ({
   detectSystemInfo: () => mockDetectSystemInfo(),
   detectPcManufacturer: () => mockDetectPcManufacturer(),
+  writeTestState: () => Promise.resolve(),
 }));
 
 describe('SystemCheckWindow', () => {

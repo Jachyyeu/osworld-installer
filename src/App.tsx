@@ -4,10 +4,13 @@ import WelcomeWindow from './components/WelcomeWindow';
 import SystemCheckWindow from './components/SystemCheckWindow';
 import DiskSelectionWindow from './components/DiskSelectionWindow';
 import UserSetupWindow from './components/UserSetupWindow';
+import EditionSelectionWindow from './components/EditionSelectionWindow';
 import InstallationProgressWindow from './components/InstallationProgressWindow';
 import UninstallerWindow from './components/UninstallerWindow';
 
-type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'progress' | 'uninstaller';
+const TEST_MODE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_TEST_MODE === 'true';
+
+type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'edition' | 'progress' | 'uninstaller';
 
 function App() {
   const [currentStep, setCurrentStep] = useState<WindowStep>('welcome');
@@ -33,6 +36,10 @@ function App() {
   };
 
   const handleUserSetupComplete = () => {
+    setCurrentStep('edition');
+  };
+
+  const handleEditionComplete = () => {
     setCurrentStep('progress');
   };
 
@@ -69,8 +76,15 @@ function App() {
             onBack={() => handleBack(installType === 'dualboot' ? 'diskselection' : 'systemcheck')}
           />
         );
+      case 'edition':
+        return (
+          <EditionSelectionWindow
+            onNext={handleEditionComplete}
+            onBack={() => handleBack('usersetup')}
+          />
+        );
       case 'progress':
-        return <InstallationProgressWindow />;
+        return <InstallationProgressWindow testMode={TEST_MODE} />;
       case 'uninstaller':
         return <UninstallerWindow onBack={() => setCurrentStep('welcome')} />;
       default:
@@ -82,6 +96,7 @@ function App() {
     { id: 'systemcheck', label: 'System Check' },
     ...(installType === 'dualboot' ? [{ id: 'diskselection', label: 'Disk Selection' }] : []),
     { id: 'usersetup', label: 'User Setup' },
+    { id: 'edition', label: 'Edition' },
   ];
 
   const activeStepIndex = stepList.findIndex(s => s.id === currentStep);

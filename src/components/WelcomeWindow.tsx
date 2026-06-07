@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Monitor, HardDrive, ArrowRight, Shield, Info } from 'lucide-react';
-import { setInstallType } from '../lib/tauri';
+import { setInstallType, writeTestState } from '../lib/tauri';
 import type { InstallType } from '../types';
 
 interface WelcomeWindowProps {
   onSelect: (type: InstallType) => void;
 }
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 export default function WelcomeWindow({ onSelect }: WelcomeWindowProps) {
   const [selectedType, setSelectedType] = useState<InstallType | null>(null);
@@ -20,6 +22,11 @@ export default function WelcomeWindow({ onSelect }: WelcomeWindowProps) {
 
     try {
       await setInstallType(selectedType);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'welcome',
+        choice: selectedType === 'dualboot' ? 'dualboot' : 'replace',
+        timestamp: Date.now(),
+      });
       onSelect(selectedType);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to set install type');

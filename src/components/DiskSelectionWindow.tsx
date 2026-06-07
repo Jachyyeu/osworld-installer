@@ -13,8 +13,10 @@ import {
   ChevronDown,
   Lock,
 } from 'lucide-react';
-import { getAvailableDisks, setDiskConfig, calculateEstimatedTime } from '../lib/tauri';
+import { getAvailableDisks, setDiskConfig, calculateEstimatedTime, writeTestState } from '../lib/tauri';
 import type { DiskInfo } from '../types';
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 interface DiskSelectionWindowProps {
   onNext: () => void;
@@ -162,6 +164,14 @@ export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWin
         encrypt,
         encrypt ? luksPassword : undefined
       );
+      const disk = disks.find((d) => d.name === selectedDisk);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'disk',
+        selectedDisk,
+        linuxSizeGb,
+        freeSpaceGb: disk?.free_space_gb ?? 0,
+        timestamp: Date.now(),
+      });
       onNext();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save disk configuration');

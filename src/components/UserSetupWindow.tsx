@@ -11,7 +11,7 @@ import {
   AlertTriangle,
   Info
 } from 'lucide-react';
-import { setUserConfig } from '../lib/tauri';
+import { setUserConfig, writeTestState } from '../lib/tauri';
 
 interface UserSetupWindowProps {
   onNext: () => void;
@@ -22,6 +22,8 @@ interface ValidationError {
   field: string;
   message: string;
 }
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps) {
   const [username, setUsername] = useState('');
@@ -77,6 +79,12 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
 
     try {
       await setUserConfig(username, computerName, password, confirmPassword);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'usersetup',
+        username,
+        valid: true,
+        timestamp: Date.now(),
+      });
       onNext();
     } catch (err) {
       setErrors([{

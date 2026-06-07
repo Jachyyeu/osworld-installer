@@ -24,8 +24,11 @@ import {
   getConfig,
   cancelInstallation,
   rollbackStaging,
+  writeTestState,
 } from '../lib/tauri';
 import type { StagingInfo } from '../types';
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 // ==================== Types ====================
 
@@ -264,11 +267,15 @@ function CelebrationOverlay({ onDone }: { onDone: () => void }) {
 
 // ==================== Main Component ====================
 
-export default function InstallationProgressWindow() {
+interface InstallationProgressWindowProps {
+  testMode?: boolean;
+}
+
+export default function InstallationProgressWindow({ testMode = false }: InstallationProgressWindowProps) {
   const [, setSteps] = useState<InstallStep[]>(INSTALL_STEPS);
   const [overallProgress, setOverallProgress] = useState(0);
   const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
-  const [isInstalling, setIsInstalling] = useState(true);
+  const [isInstalling, setIsInstalling] = useState(!testMode);
   const [isCompleted, setIsCompleted] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
@@ -327,8 +334,18 @@ export default function InstallationProgressWindow() {
   }, []);
 
   useEffect(() => {
-    runInstallationStages();
-    setupDownloadListener();
+    writeTestState(TEST_STATE_PATH, {
+      screen: 'progress',
+      stage: 'preparing',
+      started: !testMode,
+      testMode,
+      timestamp: Date.now(),
+    }).catch(() => {});
+
+    if (!testMode) {
+      runInstallationStages();
+      setupDownloadListener();
+    }
 
     return () => {
       if (unlistenRef.current) {
@@ -521,13 +538,21 @@ export default function InstallationProgressWindow() {
       {/* Header */}
       <div className="text-center space-y-1">
         <h2 className="text-xl font-semibold text-slate-100">
-          {error && !isRollingBack ? 'Installation Failed' : isCompleted ? 'Ready to Reboot' : 'Installing AltOS'}
+          {error && !isRollingBack
+            ? 'Installation Failed'
+            : isCompleted
+            ? 'Ready to Reboot'
+            : testMode && !isInstalling
+            ? 'Ready to Install'
+            : 'Installing AltOS'}
         </h2>
         <p className="text-sm text-slate-400">
           {error && !isRollingBack
             ? 'Something went wrong. We tried to roll back any changes.'
             : isCompleted
             ? 'All files are staged. Rebooting automatically…'
+            : testMode && !isInstalling
+            ? 'Review your settings before starting the installation.'
             : 'Please keep your computer plugged in and awake.'}
         </p>
       </div>
@@ -658,7 +683,34 @@ export default function InstallationProgressWindow() {
       {/* Main Progress UI */}
       {!error && !isRollingBack && !rollbackStatus && (
         <div className="space-y-6">
+          {/* Test mode: Start Installation prompt */}
+          {testMode && !isInstalling && !isCompleted && (
+            <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-2xl p-8 flex flex-col items-center space-y-6">
+              <div className="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-400 flex items-center justify-center">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-lg font-semibold text-slate-100">Ready to Install</h3>
+                <p className="text-sm text-slate-400 max-w-xs mx-auto">
+                  All settings configured. Click below to begin installation.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setIsInstalling(true);
+                  runInstallationStages();
+                  setupDownloadListener();
+                }}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white bg-emerald-500 hover:bg-emerald-600 transition-colors"
+              >
+                <Power className="w-5 h-5" />
+                <span>Start Installation</span>
+              </button>
+            </div>
+          )}
+
           {/* Circular progress + step label */}
+          {(isInstalling || isCompleted) && (
           <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-2xl p-8 flex flex-col items-center space-y-6">
             {/* Ring */}
             <ProgressRing progress={overallProgress} size={180} strokeWidth={10} />
@@ -722,6 +774,7 @@ export default function InstallationProgressWindow() {
               </div>
             )}
           </div>
+          )}
 
           {/* Details expander */}
           <div className="bg-[#1a1d21] border border-slate-800 rounded-xl overflow-hidden">
