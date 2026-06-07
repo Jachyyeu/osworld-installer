@@ -21,6 +21,7 @@ const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 interface DiskSelectionWindowProps {
   onNext: () => void;
   onBack: () => void;
+  autoplay?: boolean;
 }
 
 const FILESYSTEMS = [
@@ -31,7 +32,7 @@ const FILESYSTEMS = [
 
 const MIN_SIZE_GB = 20;
 
-export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWindowProps) {
+export default function DiskSelectionWindow({ onNext, onBack, autoplay = false }: DiskSelectionWindowProps) {
   const [disks, setDisks] = useState<DiskInfo[]>([]);
   const [selectedDisk, setSelectedDisk] = useState<string | null>(null);
   const [linuxSizeGb, setLinuxSizeGb] = useState<number>(50);
@@ -71,7 +72,12 @@ export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWin
     setError(null);
 
     try {
-      const availableDisks = await getAvailableDisks();
+      const availableDisks = autoplay
+        ? [
+            { name: 'Disk 0 (C:)', size_gb: 512, free_space_gb: 200 },
+            { name: 'Disk 1 (D:)', size_gb: 1024, free_space_gb: 800 },
+          ]
+        : await getAvailableDisks();
       setDisks(availableDisks);
 
       if (availableDisks.length > 0) {
@@ -178,6 +184,17 @@ export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWin
       setIsSaving(false);
     }
   };
+
+  const handleContinueRef = useRef(handleContinue);
+  handleContinueRef.current = handleContinue;
+
+  useEffect(() => {
+    if (!autoplay || isLoading || !selectedDisk || isSaving) return;
+    const t = setTimeout(() => {
+      handleContinueRef.current();
+    }, 800);
+    return () => clearTimeout(t);
+  }, [autoplay, isLoading, selectedDisk, isSaving]);
 
   return (
     <div className="space-y-6">

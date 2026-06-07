@@ -1238,10 +1238,23 @@ fn reboot_to_installer() -> Result<()> {
     }
 }
 
-/// Write test state JSON to disk for automated UI testing
+/// Write test state JSON to disk for automated UI testing (appends to array)
 #[tauri::command]
 fn write_test_state(path: String, json: String) -> Result<()> {
-    std::fs::write(&path, json)
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&existing) {
+            entries = arr;
+        } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&existing) {
+            entries = vec![obj];
+        }
+    }
+    let new_entry: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| InstallerError::Unknown(format!("Invalid test state JSON: {}", e)))?;
+    entries.push(new_entry);
+    let out = serde_json::to_string_pretty(&entries)
+        .map_err(|e| InstallerError::Unknown(format!("Failed to serialize test state: {}", e)))?;
+    std::fs::write(&path, out)
         .map_err(|e| InstallerError::Unknown(format!("Failed to write test state: {}", e)))?;
     Ok(())
 }

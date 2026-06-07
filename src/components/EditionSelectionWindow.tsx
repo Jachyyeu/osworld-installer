@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Zap, Gamepad2, Palette, ArrowRight, ArrowLeft, CheckCircle } from 'lucide-react';
 import { writeTestState } from '../lib/tauri';
 
 interface EditionSelectionWindowProps {
   onNext: () => void;
   onBack: () => void;
+  autoplay?: boolean;
 }
 
 const EDITIONS = [
@@ -39,7 +40,7 @@ const EDITIONS = [
 
 const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
-export default function EditionSelectionWindow({ onNext, onBack }: EditionSelectionWindowProps) {
+export default function EditionSelectionWindow({ onNext, onBack, autoplay = false }: EditionSelectionWindowProps) {
   const [selectedEdition, setSelectedEdition] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -59,6 +60,18 @@ export default function EditionSelectionWindow({ onNext, onBack }: EditionSelect
     }
     onNext();
   };
+
+  const handleContinueRef = useRef(handleContinue);
+  handleContinueRef.current = handleContinue;
+
+  useEffect(() => {
+    if (!autoplay) return;
+    setSelectedEdition('basic');
+    const t = setTimeout(() => {
+      handleContinueRef.current();
+    }, 800);
+    return () => clearTimeout(t);
+  }, [autoplay]);
 
   return (
     <div className="space-y-6">

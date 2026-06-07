@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   User,
   Monitor,
@@ -16,6 +16,7 @@ import { setUserConfig, writeTestState } from '../lib/tauri';
 interface UserSetupWindowProps {
   onNext: () => void;
   onBack: () => void;
+  autoplay?: boolean;
 }
 
 interface ValidationError {
@@ -25,7 +26,7 @@ interface ValidationError {
 
 const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
-export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps) {
+export default function UserSetupWindow({ onNext, onBack, autoplay = false }: UserSetupWindowProps) {
   const [username, setUsername] = useState('');
   const [computerName, setComputerName] = useState('');
   const [password, setPassword] = useState('');
@@ -94,6 +95,24 @@ export default function UserSetupWindow({ onNext, onBack }: UserSetupWindowProps
       setIsLoading(false);
     }
   };
+
+  const handleContinueRef = useRef(handleContinue);
+  handleContinueRef.current = handleContinue;
+
+  useEffect(() => {
+    if (!autoplay) return;
+    const testUser = 'testuser';
+    const testHost = 'altos-test';
+    const testPass = 'TestPass123!';
+    setUsername(testUser);
+    setComputerName(testHost);
+    setPassword(testPass);
+    setConfirmPassword(testPass);
+    const t = setTimeout(() => {
+      handleContinueRef.current();
+    }, 800);
+    return () => clearTimeout(t);
+  }, [autoplay]);
 
   const getPasswordStrength = (pwd: string): { strength: number; label: string; color: string } => {
     let strength = 0;

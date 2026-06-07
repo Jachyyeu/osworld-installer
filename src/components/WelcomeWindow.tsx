@@ -1,18 +1,37 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Monitor, HardDrive, ArrowRight, Shield, Info } from 'lucide-react';
 import { setInstallType, writeTestState } from '../lib/tauri';
 import type { InstallType } from '../types';
 
 interface WelcomeWindowProps {
   onSelect: (type: InstallType) => void;
+  autoplay?: boolean;
 }
 
 const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
-export default function WelcomeWindow({ onSelect }: WelcomeWindowProps) {
+export default function WelcomeWindow({ onSelect, autoplay = false }: WelcomeWindowProps) {
   const [selectedType, setSelectedType] = useState<InstallType | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!autoplay) return;
+    const t = setTimeout(async () => {
+      try {
+        await setInstallType('dualboot');
+        await writeTestState(TEST_STATE_PATH, {
+          screen: 'welcome',
+          choice: 'dualboot',
+          timestamp: Date.now(),
+        });
+        onSelect('dualboot');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Autoplay failed on welcome screen');
+      }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [autoplay, onSelect]);
 
   const handleContinue = async () => {
     if (!selectedType) return;

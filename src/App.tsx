@@ -9,6 +9,7 @@ import InstallationProgressWindow from './components/InstallationProgressWindow'
 import UninstallerWindow from './components/UninstallerWindow';
 
 const TEST_MODE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_TEST_MODE === 'true';
+const AUTOPLAY = TEST_MODE;
 
 type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'edition' | 'progress' | 'uninstaller';
 
@@ -54,7 +55,7 @@ function App() {
   const renderCurrentWindow = () => {
     switch (currentStep) {
       case 'welcome':
-        return <WelcomeWindow onSelect={handleInstallTypeSelect} />;
+        return <WelcomeWindow onSelect={handleInstallTypeSelect} autoplay={AUTOPLAY} />;
       case 'systemcheck':
         return (
           <SystemCheckWindow
@@ -67,6 +68,7 @@ function App() {
           <DiskSelectionWindow
             onNext={handleDiskSelectionComplete}
             onBack={() => handleBack('systemcheck')}
+            autoplay={AUTOPLAY}
           />
         );
       case 'usersetup':
@@ -74,6 +76,7 @@ function App() {
           <UserSetupWindow
             onNext={handleUserSetupComplete}
             onBack={() => handleBack(installType === 'dualboot' ? 'diskselection' : 'systemcheck')}
+            autoplay={AUTOPLAY}
           />
         );
       case 'edition':
@@ -81,6 +84,7 @@ function App() {
           <EditionSelectionWindow
             onNext={handleEditionComplete}
             onBack={() => handleBack('usersetup')}
+            autoplay={AUTOPLAY}
           />
         );
       case 'progress':
