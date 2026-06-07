@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
@@ -68,6 +69,13 @@ impl AppState {
             config: Mutex::new(InstallConfig::default()),
         }
     }
+}
+
+// Test mode flag: when enabled, destructive final actions (like reboot) are intercepted.
+static TEST_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn is_test_mode() -> bool {
+    TEST_MODE_ENABLED.load(Ordering::Relaxed)
 }
 
 // System information structure
@@ -860,15 +868,22 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             }
         }
 
+        // In test mode, use a tiny Linux partition and reduced safety buffer so the
+        // automated pre-reboot test can run on disks with limited free space.
+        let linux_size_gb = if is_test_mode() { linux_size_gb.min(1) } else { linux_size_gb };
+        let buffer_gb: u64 = if is_test_mode() { 1 } else { 10 };
+
         // Check free space on C:
         let free_gb = get_disk_free_space().unwrap_or(0);
-        let required_gb = linux_size_gb + 2 + 10; // linux + boot + buffer
+        let required_gb = linux_size_gb + 2 + buffer_gb; // linux + boot + buffer
         if free_gb < required_gb {
             return Err(InstallerError::SystemCheckFailed(format!(
                 "Insufficient free space. Required: {} GB, Available: {} GB",
                 required_gb, free_gb
             )));
         }
+
+        write_install_state("prepare_start", serde_json::Map::new());
 
         // Capture pre-staging state for rollback
         let c_size_output = run_powershell("(Get-Partition -DriveLetter C).Size")?;
@@ -937,24 +952,30 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             )));
         }
 
+        write_install_state("prepare_partitioned", serde_json::Map::new());
+
         // Disk space verification: ensure C: still has >= 15% free
-        let free_after_gb = get_disk_free_space().unwrap_or(0);
-        let total_gb = if total_size_mb > 0 {
-            total_size_mb / 1024
-        } else {
-            free_after_gb + linux_size_gb + 2
-        };
-        let free_percent = if total_gb > 0 {
-            (free_after_gb * 100) / total_gb
-        } else {
-            0
-        };
-        if free_percent < 15 {
-            let _ = cleanup_staging("OSWORLD".to_string());
-            return Err(InstallerError::SystemCheckFailed(format!(
-                "C: drive free space is too low after shrink ({}%). At least 15% is required.",
-                free_percent
-            )));
+        // (skipped in test mode because tiny test partitions on small drives
+        // would otherwise fail this heuristic.)
+        if !is_test_mode() {
+            let free_after_gb = get_disk_free_space().unwrap_or(0);
+            let total_gb = if total_size_mb > 0 {
+                total_size_mb / 1024
+            } else {
+                free_after_gb + linux_size_gb + 2
+            };
+            let free_percent = if total_gb > 0 {
+                (free_after_gb * 100) / total_gb
+            } else {
+                0
+            };
+            if free_percent < 15 {
+                let _ = cleanup_staging("OSWORLD".to_string());
+                return Err(InstallerError::SystemCheckFailed(format!(
+                    "C: drive free space is too low after shrink ({}%). At least 15% is required.",
+                    free_percent
+                )));
+            }
         }
 
         // Locate created partitions
@@ -997,6 +1018,8 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             stage_secure_boot_files(&boot_letter)?;
         }
 
+        write_install_state("prepare_complete", serde_json::Map::new());
+
         Ok(StagingInfo {
             boot_partition_letter: boot_letter,
             linux_partition_number: linux_part_num,
@@ -1021,6 +1044,8 @@ async fn download_and_stage_iso(
 ) -> Result<DownloadProgress> {
     #[cfg(windows)]
     {
+        write_install_state("download_start", serde_json::Map::new());
+
         let drive = target_drive_letter.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive);
         let config_path = format!("{}:\\install-config.json", drive);
@@ -1067,6 +1092,8 @@ async fn download_and_stage_iso(
             let _ = save_staging_state(&state);
         }
 
+        write_install_state("download_complete", serde_json::Map::new());
+
         Ok(result)
     }
     #[cfg(not(windows))]
@@ -1083,6 +1110,8 @@ async fn download_and_stage_iso(
 async fn install_refind() -> Result<()> {
     #[cfg(windows)]
     {
+        write_install_state("bootloader_start", serde_json::Map::new());
+
         let temp_dir = std::env::temp_dir().join("osworld-refind");
         let zip_path = temp_dir.join("refind.zip");
         tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
@@ -1207,6 +1236,8 @@ menuentry "AltOS Recovery" {{
             let _ = save_staging_state(&state);
         }
 
+        write_install_state("bootloader_complete", serde_json::Map::new());
+
         Ok(())
     }
     #[cfg(not(windows))]
@@ -1217,9 +1248,27 @@ menuentry "AltOS Recovery" {{
     }
 }
 
-/// Reboot the computer into the installer.
+/// Reboot the computer into the installer. In test mode, writes state and returns
+/// without actually rebooting.
 #[tauri::command]
 fn reboot_to_installer() -> Result<()> {
+    if TEST_MODE_ENABLED.load(Ordering::Relaxed) {
+        let _ = write_test_state(
+            "C:\\\\altos-test-state.json".to_string(),
+            serde_json::json!({
+                "screen": "progress",
+                "stage": "ready_to_reboot",
+                "testMode": true,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+            })
+            .to_string(),
+        );
+        return Ok(());
+    }
+
     #[cfg(windows)]
     {
         std::process::Command::new("shutdown")
@@ -1236,6 +1285,34 @@ fn reboot_to_installer() -> Result<()> {
             "Reboot is only supported on Windows".to_string(),
         ))
     }
+}
+
+/// Enable or disable backend test mode. When enabled, destructive final actions
+/// (e.g. reboot) are intercepted and recorded instead of executed.
+#[tauri::command]
+fn set_test_mode(enabled: bool) {
+    TEST_MODE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn write_install_state(stage: &str, extra: serde_json::Map<String, serde_json::Value>) {
+    let _ = write_test_state(
+        "C:\\\\altos-test-state.json".to_string(),
+        {
+            let mut obj = serde_json::Map::new();
+            obj.insert("screen".to_string(), serde_json::Value::String("progress".to_string()));
+            obj.insert("stage".to_string(), serde_json::Value::String(stage.to_string()));
+            obj.insert("timestamp".to_string(), serde_json::Value::Number(
+                serde_json::Number::from(std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64)
+            ));
+            for (k, v) in extra {
+                obj.insert(k, v);
+            }
+            serde_json::Value::Object(obj).to_string()
+        },
+    );
 }
 
 /// Write test state JSON to disk for automated UI testing (appends to array)
@@ -3217,6 +3294,7 @@ fn main() {
             mark_post_install_seen,
             set_refind_default,
             write_test_state,
+            set_test_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

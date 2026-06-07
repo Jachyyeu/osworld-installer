@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { InstallType, InstallConfig } from './types';
+import { setTestMode } from './lib/tauri';
 import WelcomeWindow from './components/WelcomeWindow';
 import SystemCheckWindow from './components/SystemCheckWindow';
 import DiskSelectionWindow from './components/DiskSelectionWindow';
@@ -17,6 +18,12 @@ function App() {
   const [currentStep, setCurrentStep] = useState<WindowStep>('welcome');
   const [installType, setInstallTypeState] = useState<InstallType | null>(null);
   const [, setConfig] = useState<InstallConfig>({});
+
+  useEffect(() => {
+    if (TEST_MODE) {
+      setTestMode(true).catch(() => {});
+    }
+  }, []);
 
   const handleInstallTypeSelect = (type: InstallType) => {
     setInstallTypeState(type);

@@ -134,6 +134,10 @@ export async function writeTestState(path: string, data: unknown): Promise<void>
   return invoke('write_test_state', { path, json: JSON.stringify(data) });
 }
 
+export async function setTestMode(enabled: boolean): Promise<void> {
+  return invoke('set_test_mode', { enabled });
+}
+
 // Event listeners
 export function onInstallProgress(callback: (progress: InstallProgress) => void) {
   return listen<InstallProgress>('install-progress', (event) => {

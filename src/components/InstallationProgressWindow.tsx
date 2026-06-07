@@ -411,7 +411,17 @@ export default function InstallationProgressWindow({ testMode = false }: Install
       setCurrentDetail('Verifying file integrity…');
       addLog('Verifying ISO checksum and extracted boot files…');
       setOverallProgress(65);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'progress',
+        stage: 'verify_start',
+        timestamp: Date.now(),
+      }).catch(() => {});
       await new Promise((r) => setTimeout(r, 900));
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'progress',
+        stage: 'verify_complete',
+        timestamp: Date.now(),
+      }).catch(() => {});
       addLog('Verification passed', 'success');
       setOverallProgress(70);
 
@@ -434,7 +444,17 @@ export default function InstallationProgressWindow({ testMode = false }: Install
       setCurrentDetail('Writing final configuration…');
       addLog('Writing install-config.json to boot partition…');
       setOverallProgress(90);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'progress',
+        stage: 'finalize_start',
+        timestamp: Date.now(),
+      }).catch(() => {});
       await new Promise((r) => setTimeout(r, 600));
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'progress',
+        stage: 'finalize_complete',
+        timestamp: Date.now(),
+      }).catch(() => {});
       addLog('Configuration saved', 'success');
       addLog('Installation staging complete', 'success');
       setOverallProgress(100);
@@ -481,6 +501,21 @@ export default function InstallationProgressWindow({ testMode = false }: Install
       }
     }
   };
+
+  const runStagesRef = useRef(runInstallationStages);
+  const setupListenerRef = useRef(setupDownloadListener);
+  runStagesRef.current = runInstallationStages;
+  setupListenerRef.current = setupDownloadListener;
+
+  useEffect(() => {
+    if (!testMode || isInstalling || isCompleted) return;
+    const t = setTimeout(() => {
+      setIsInstalling(true);
+      runStagesRef.current();
+      setupListenerRef.current();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [testMode]);
 
   const updateStepStatus = (stepId: string, status: InstallStep['status']) => {
     setSteps((prev) =>
