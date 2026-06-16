@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AltOS — Linux made simple</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #0b0d10;
+      color: #e2e8f0;
+      line-height: 1.6;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+    header { padding: 80px 0 40px; text-align: center; }
+    header h1 { font-size: 56px; font-weight: 800; letter-spacing: -1px; margin-bottom: 16px; }
+    header h1 span { color: #34d399; }
+    header p { font-size: 20px; color: #94a3b8; max-width: 640px; margin: 0 auto 32px; }
+    .btn {
+      display: inline-block;
+      background: #34d399;
+      color: #0b0d10;
+      padding: 14px 28px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 16px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(52, 211, 153, 0.25); }
+    .btn-outline {
+      background: transparent;
+      color: #34d399;
+      border: 2px solid #34d399;
+      margin-left: 12px;
+    }
+    section { padding: 60px 0; }
+    h2 { font-size: 32px; margin-bottom: 24px; text-align: center; }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+    .card {
+      background: #151921;
+      border: 1px solid #232834;
+      border-radius: 16px;
+      padding: 28px;
+    }
+    .card h3 { color: #34d399; margin-bottom: 10px; font-size: 20px; }
+    .card p { color: #94a3b8; }
+    .editions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 24px; }
+    .edition {
+      background: #151921;
+      border: 1px solid #232834;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+    .edition .price { font-size: 28px; font-weight: 800; color: #34d399; margin: 12px 0; }
+    footer { text-align: center; padding: 40px 0; color: #64748b; border-top: 1px solid #1e2127; }
+    @media (max-width: 600px) {
+      header h1 { font-size: 40px; }
+      .btn { display: block; margin: 8px 0; }
+      .btn-outline { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Alt<span>OS</span></h1>
+      <p>A polished, macOS-style Arch Linux experience. Install it alongside Windows or replace it entirely — in just a few clicks.</p>
+      <a class="btn" href="https://github.com/Jachyyeu/osworld-installer/releases">Download AltOS Installer</a>
+      <a class="btn btn-outline" href="https://github.com/Jachyyeu/osworld-installer">View on GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <div class="container">
+      <h2>Why AltOS?</h2>
+      <div class="features">
+        <div class="card">
+          <h3>One-click install</h3>
+          <p>Download the Windows installer, pick your edition, and reboot. No manual partitioning, no terminal commands.</p>
+        </div>
+        <div class="card">
+          <h3>Editions for everyone</h3>
+          <p>Home, Gaming, Creative, and Privacy editions come pre-loaded with the apps and settings you actually need.</p>
+        </div>
+        <div class="card">
+          <h3>Your apps, your way</h3>
+          <p>Choose your browser, email client, and music player before installation. Toggle LibreOffice skins on or off.</p>
+        </div>
+        <div class="card">
+          <h3>AltOS App Store</h3>
+          <p>Install Steam, Discord, Spotify, OBS, and dozens more curated apps with a single click after setup.</p>
+        </div>
+        <div class="card">
+          <h3>Windows co-existence</h3>
+          <p>Dual-boot keeps your Windows files safe. Or go all-in and replace Windows completely — your choice.</p>
+        </div>
+        <div class="card">
+          <h3>Remote ready</h3>
+          <p>OpenSSH and Tailscale are built in, so you can manage your AltOS machine from anywhere.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <h2>Choose your edition</h2>
+      <div class="editions">
+        <div class="edition">
+          <h3>Home</h3>
+          <div class="price">Free</div>
+          <p>Essential Linux desktop with Brave, LibreOffice, KDE, and the App Store.</p>
+        </div>
+        <div class="edition">
+          <h3>Gaming</h3>
+          <div class="price">$9.99</div>
+          <p>Steam, Proton GE, GameMode, MangoHud, and optimized GPU drivers.</p>
+        </div>
+        <div class="edition">
+          <h3>Creative</h3>
+          <div class="price">$14.99</div>
+          <p>Blender, Krita, OBS, GIMP, Inkscape, Kdenlive, and more.</p>
+        </div>
+        <div class="edition">
+          <h3>Privacy</h3>
+          <div class="price">$9.99</div>
+          <p>Hardened Firefox, DNS-over-HTTPS, MAC randomization, VPN tools.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>&copy; 2026 AltOS. Built on Arch Linux.</p>
+    </div>
+  </footer>
+</body>
+</html>
