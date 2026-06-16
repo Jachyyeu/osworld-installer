@@ -11,6 +11,16 @@ dist-ssr/
 # Tauri build output
 src-tauri/target/
 
+# AltOS build artifacts
+out/
+vm-test/*.img
+vm-test/*.iso
+vm-test/*.qcow2
+*.windows
+
+# Kimi session data
+.kimi/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

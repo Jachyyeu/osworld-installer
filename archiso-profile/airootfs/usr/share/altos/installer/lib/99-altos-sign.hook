@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Signing kernel with AltOS MOK for Secure Boot...
+When = PostTransaction
+Exec = /usr/local/bin/altos-sign-kernel.sh
+NeedsTargets

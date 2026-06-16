@@ -1,0 +1,17 @@
+[Unit]
+Description=AltOS Automated Installer
+After=network-online.target pacman-init.service
+Wants=network-online.target
+Before=getty@tty1.service
+ConditionKernelCommandLine=!altos_installer_skip
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/altos/installer/live-bridge.sh --confirm
+StandardOutput=journal+console
+StandardError=journal+console
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

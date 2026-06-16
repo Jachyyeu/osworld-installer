@@ -109,7 +109,7 @@ const INSTALL_STEPS: InstallStep[] = [
   {
     id: 'download',
     name: 'Download OS',
-    description: 'Downloading Arch Linux ISO…',
+    description: 'Downloading AltOS ISO…',
     icon: <Download className="w-5 h-5" />,
     status: 'pending',
   },
@@ -379,7 +379,7 @@ export default function InstallationProgressWindow() {
       // Phase 1: Download ISO
       setCurrentPhaseIndex(1);
       setCurrentDetail('Connecting to mirror…');
-      addLog('Beginning ISO download from geo.mirror.pkgbuild.com…');
+      addLog('Beginning ISO download…');
       updateStepStatus('download', 'in-progress');
       setOverallProgress(25);
 

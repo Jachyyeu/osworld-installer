@@ -1,0 +1,12 @@
+[Unit]
+Description=AltOS First-Boot Remote Monitor
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/share/altos/first-boot/altos-monitor.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

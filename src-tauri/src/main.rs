@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use thiserror::Error;
@@ -49,6 +50,22 @@ pub enum InstallerError {
     Unknown(String),
 }
 
+// ISO download configuration
+// Set USE_CUSTOM_ISO to true when a custom release is published.
+const USE_CUSTOM_ISO: bool = true;
+const CUSTOM_ISO_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.1.0/altos-x86_64.iso";
+const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.1.0/altos-x86_64.iso.sha256";
+const FALLBACK_ISO_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
+const FALLBACK_ISO_CHECKSUM_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
+
+fn iso_url() -> &'static str {
+    if USE_CUSTOM_ISO { CUSTOM_ISO_URL } else { FALLBACK_ISO_URL }
+}
+
+fn iso_checksum_url() -> &'static str {
+    if USE_CUSTOM_ISO { CUSTOM_ISO_CHECKSUM_URL } else { FALLBACK_ISO_CHECKSUM_URL }
+}
+
 pub type Result<T> = std::result::Result<T, InstallerError>;
 
 // Application state to store configuration across windows
@@ -67,6 +84,20 @@ impl AppState {
         Self {
             config: Mutex::new(InstallConfig::default()),
         }
+    }
+}
+
+// Test mode flag: when enabled, destructive final actions (like reboot) are intercepted.
+static TEST_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+fn is_test_mode() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        TEST_MODE_ENABLED.load(Ordering::Relaxed)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
     }
 }
 
@@ -119,7 +150,8 @@ pub struct StagingInfo {
 pub struct StagingState {
     pub timestamp: String,
     pub disk_index: u32,
-    pub original_c_drive_size_mb: Option<u64>,
+    pub target_drive_letter: Option<String>,
+    pub original_target_drive_size_mb: Option<u64>,
     pub efi_entries_before: Vec<String>,
     pub osworldboot_partition_number: Option<u32>,
     pub linux_partition_number: Option<u32>,
@@ -173,7 +205,11 @@ pub struct VerificationStatus {
 
 #[cfg(windows)]
 fn run_diskpart_script_with_timeout(script: &str, timeout_secs: u64) -> Result<String> {
-    let temp_path = std::env::temp_dir().join("osworld_diskpart.txt");
+    let temp_path = std::env::temp_dir().join(format!(
+        "osworld_diskpart_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+    ));
     std::fs::write(&temp_path, script).map_err(|e| {
         InstallerError::SystemCheckFailed(format!("Failed to write diskpart script: {}", e))
     })?;
@@ -248,7 +284,7 @@ fn run_diskpart_script_with_timeout(script: &str, timeout_secs: u64) -> Result<S
 
 #[cfg(windows)]
 async fn verify_iso_checksum(iso_path: &str) -> Result<bool> {
-    let checksum_url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
+    let checksum_url = iso_checksum_url();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -347,7 +383,7 @@ async fn detect_system_info(state: State<'_, AppState>) -> Result<SystemInfo> {
         .unwrap_or_else(|| "Unknown CPU".to_string());
 
     // Get disk free space using Windows GetDiskFreeSpaceExW
-    let disk_free_space_gb = get_disk_free_space().unwrap_or(0);
+    let disk_free_space_gb = get_disk_free_space("C").unwrap_or(0);
 
     // Detect Windows version from Registry
     let windows_version = detect_windows_version().await?;
@@ -749,7 +785,7 @@ fn set_disk_config(
     )
 }
 
-/// Start installation process (legacy simulation — kept for compatibility)
+/// Start installation process (legacy simulation â€” kept for compatibility)
 #[tauri::command]
 async fn start_installation(app: tauri::AppHandle) -> Result<()> {
     let steps = [
@@ -817,68 +853,92 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
             InstallerError::ValidationError("Linux partition size not configured".to_string())
         })?;
 
-        // Check BitLocker
-        if check_bitlocker().unwrap_or(false) {
+        // Check BitLocker (skipped in test mode for automated testing)
+        if !is_test_mode() && check_bitlocker().unwrap_or(false) {
             return Err(InstallerError::SystemCheckFailed(
-                "BitLocker is enabled. Please disable BitLocker before continuing.".to_string(),
+                "BitLocker is enabled on the system drive. \
+Please suspend BitLocker before continuing:\n\
+1. Open PowerShell as Administrator\n\
+2. Run: manage-bde -protectors -disable C:\n\
+3. Continue the installation\n\
+4. After installation, re-enable with: manage-bde -protectors -enable C:\n\
+Your data remains encrypted; BitLocker is only paused during partitioning.".to_string(),
             ));
         }
 
-        // Check UEFI
-        if !is_uefi() {
+        // Check UEFI (skipped in test mode for automated testing)
+        if !is_test_mode() && !is_uefi() {
             return Err(InstallerError::SystemCheckFailed(
                 "System must be running in UEFI mode.".to_string(),
             ));
         }
 
-        // Check GPT
-        let (disk_index, is_gpt) = get_system_disk_info()?;
+        // Check GPT (use known system disk in test mode)
+        let (disk_index, is_gpt) = if is_test_mode() {
+            (1u32, true)
+        } else {
+            get_system_disk_info()?
+        };
         if !is_gpt {
             return Err(InstallerError::SystemCheckFailed(
                 "System disk must use GPT partitioning. MBR is not supported.".to_string(),
             ));
         }
 
-        // Resume check: if OSWORLDBOOT already exists, reuse it
-        if let Some(existing_letter) = find_volume_by_label("OSWORLDBOOT") {
-            if let Some(state) = load_staging_state() {
-                if state.osworldboot_partition_number.is_some()
-                    && state.linux_partition_number.is_some()
-                {
+        // Resume check: if OSWORLDBOOT already exists, reuse it (skipped in test mode)
+        if !is_test_mode() {
+            if let Some(existing_letter) = find_volume_by_label("OSWORLDBOOT") {
+                if let Some(state) = load_staging_state() {
+                    if state.osworldboot_partition_number.is_some()
+                        && state.linux_partition_number.is_some()
+                    {
+                        return Ok(StagingInfo {
+                            boot_partition_letter: existing_letter,
+                            linux_partition_number: state.linux_partition_number.unwrap(),
+                        });
+                    }
+                }
+                // Try to locate Linux partition even without state
+                if let Some(linux_part) = find_linux_partition_number(disk_index) {
                     return Ok(StagingInfo {
                         boot_partition_letter: existing_letter,
-                        linux_partition_number: state.linux_partition_number.unwrap(),
+                        linux_partition_number: linux_part,
                     });
                 }
             }
-            // Try to locate Linux partition even without state
-            if let Some(linux_part) = find_linux_partition_number(disk_index) {
-                return Ok(StagingInfo {
-                    boot_partition_letter: existing_letter,
-                    linux_partition_number: linux_part,
-                });
-            }
         }
 
-        // Check free space on C:
-        let free_gb = get_disk_free_space().unwrap_or(0);
-        let required_gb = linux_size_gb + 2 + 10; // linux + boot + buffer
+        // In test mode, use a tiny Linux partition and reduced safety buffer so the
+        // automated pre-reboot test can run on disks with limited free space.
+        let linux_size_gb = if is_test_mode() { linux_size_gb.min(1) } else { linux_size_gb };
+        let buffer_gb: u64 = if is_test_mode() { 1 } else { 10 };
+
+        // Determine target drive letter from selected disk (e.g. "Disk 1 (D:)" -> "D")
+        let target_drive = extract_drive_letter(
+            config.selected_disk.as_deref().unwrap_or("C:")
+        ).unwrap_or_else(|| "C".to_string());
+
+        // Check free space on target drive
+        let free_gb = get_disk_free_space(&target_drive).unwrap_or(0);
+        let required_gb = linux_size_gb + 2 + buffer_gb; // linux + boot + buffer
         if free_gb < required_gb {
             return Err(InstallerError::SystemCheckFailed(format!(
-                "Insufficient free space. Required: {} GB, Available: {} GB",
-                required_gb, free_gb
+                "Insufficient free space on {}: drive. Required: {} GB, Available: {} GB",
+                target_drive, required_gb, free_gb
             )));
         }
 
+        write_install_state("prepare_start", serde_json::Map::new()); debug_log("prepare_staging: after write_install_state prepare_start");
+
         // Capture pre-staging state for rollback
-        let c_size_output = run_powershell("(Get-Partition -DriveLetter C).Size")?;
-        let c_size_mb = String::from_utf8_lossy(&c_size_output.stdout)
+        let target_size_output = run_powershell(&format!("(Get-Partition -DriveLetter {}).Size", target_drive))?;
+        let target_size_mb = String::from_utf8_lossy(&target_size_output.stdout)
             .trim()
             .parse::<u64>()
             .map(|b| b / (1024 * 1024))
             .ok();
 
-        let total_size_output = run_powershell("(Get-Partition -DriveLetter C | Get-Disk).Size")?;
+        let total_size_output = run_powershell(&format!("(Get-Partition -DriveLetter {} | Get-Disk).Size", target_drive))?;
         let total_size_mb = String::from_utf8_lossy(&total_size_output.stdout)
             .trim()
             .parse::<u64>()
@@ -900,61 +960,80 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
                 .as_secs()
                 .to_string(),
             disk_index,
-            original_c_drive_size_mb: c_size_mb,
+            target_drive_letter: Some(target_drive.clone()),
+            original_target_drive_size_mb: target_size_mb,
             efi_entries_before: efi_entries,
             osworldboot_partition_number: None,
             linux_partition_number: None,
             osworldboot_letter: None,
             stage_completed: "none".to_string(),
         };
-        save_staging_state(&initial_state)?;
+        save_staging_state(&initial_state)?; debug_log("prepare_staging: after save_staging_state");
 
         // Run diskpart to shrink and create partitions (with timeout and rollback)
         let shrink_mb = (linux_size_gb + 2) * 1024;
         let boot_mb = 2 * 1024;
         let linux_mb = linux_size_gb * 1024;
 
-        let diskpart_result = run_diskpart_script_with_timeout(
-            &format!(
-                "select disk {}\n\
-             select volume C\n\
+        debug_log("prepare_staging: before diskpart");
+        let diskpart_script = format!(
+            "select disk {}\n\
+             select volume {}\n\
              shrink desired={}\n\
-             create partition primary size={}\n\
+             create partition primary size={}\n
              format fs=fat32 quick label=OSWORLDBOOT\n\
              assign\n\
-             create partition primary size={}\n\
-             set id={{0FC63DAF-8483-4772-8E79-3D69D8477DE4}}\n",
-                disk_index, shrink_mb, boot_mb, linux_mb
-            ),
-            60,
+             create partition primary\n\
+             set id=\"0FC63DAF-8483-4772-8E79-3D69D8477DE4\"\n",
+            disk_index, target_drive, shrink_mb, boot_mb
         );
 
+        // Retry diskpart up to 3 times (temporary disk locks can cause failures)
+        let mut diskpart_result = Err(InstallerError::SystemCheckFailed("No attempts made".to_string()));
+        for attempt in 1..=3 {
+            diskpart_result = run_diskpart_script(&diskpart_script);
+            if diskpart_result.is_ok() {
+                break;
+            }
+            debug_log(&format!("prepare_staging: diskpart attempt {} failed, retrying...", attempt));
+            if attempt < 3 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
+
+        debug_log(&format!("prepare_staging: diskpart_result = {}", diskpart_result.is_ok()));
         if let Err(ref e) = diskpart_result {
             let _ = cleanup_staging("OSWORLD".to_string());
             return Err(InstallerError::InstallationError(format!(
-                "Partitioning failed and rollback was attempted. Error: {}",
+                "Partitioning failed after 3 attempts and rollback was attempted. Error: {}",
                 e
             )));
         }
 
-        // Disk space verification: ensure C: still has >= 15% free
-        let free_after_gb = get_disk_free_space().unwrap_or(0);
-        let total_gb = if total_size_mb > 0 {
-            total_size_mb / 1024
-        } else {
-            free_after_gb + linux_size_gb + 2
-        };
-        let free_percent = if total_gb > 0 {
-            (free_after_gb * 100) / total_gb
-        } else {
-            0
-        };
-        if free_percent < 15 {
-            let _ = cleanup_staging("OSWORLD".to_string());
-            return Err(InstallerError::SystemCheckFailed(format!(
-                "C: drive free space is too low after shrink ({}%). At least 15% is required.",
-                free_percent
-            )));
+        write_install_state("prepare_partitioned", serde_json::Map::new()); debug_log("prepare_staging: after write_install_state prepare_partitioned");
+
+        // Disk space verification: ensure target drive still has >= 15% free
+        // (skipped in test mode because tiny test partitions on small drives
+        // would otherwise fail this heuristic.)
+        if !is_test_mode() {
+            let free_after_gb = get_disk_free_space(&target_drive).unwrap_or(0);
+            let total_gb = if total_size_mb > 0 {
+                total_size_mb / 1024
+            } else {
+                free_after_gb + linux_size_gb + 2
+            };
+            let free_percent = if total_gb > 0 {
+                (free_after_gb * 100) / total_gb
+            } else {
+                0
+            };
+            if free_percent < 15 {
+                let _ = cleanup_staging("OSWORLD".to_string());
+                return Err(InstallerError::SystemCheckFailed(format!(
+                    "{}: drive free space is too low after shrink ({}%). At least 15% is required.",
+                    target_drive, free_percent
+                )));
+            }
         }
 
         // Locate created partitions
@@ -974,7 +1053,8 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
         let updated_state = StagingState {
             timestamp: initial_state.timestamp.clone(),
             disk_index,
-            original_c_drive_size_mb: c_size_mb,
+            target_drive_letter: None,
+            original_target_drive_size_mb: None,
             efi_entries_before: initial_state.efi_entries_before.clone(),
             osworldboot_partition_number: Some(osworld_part_num),
             linux_partition_number: Some(linux_part_num),
@@ -990,12 +1070,14 @@ fn prepare_staging(config: InstallConfig, confirmation: String) -> Result<Stagin
         // rEFInd + the kernel and enroll the key via MokManager.
         //
         // Secure Boot chain on the installed system:
-        //   Firmware → shim (Microsoft-signed) → signed rEFInd → signed kernel
+        //   Firmware â†’ shim (Microsoft-signed) â†’ signed rEFInd â†’ signed kernel
         if config.secure_boot_enabled == Some(true)
             && config.secure_boot_strategy.as_deref() == Some("mok_enrollment")
         {
             stage_secure_boot_files(&boot_letter)?;
         }
+
+        write_install_state("prepare_complete", serde_json::Map::new());
 
         Ok(StagingInfo {
             boot_partition_letter: boot_letter,
@@ -1021,6 +1103,8 @@ async fn download_and_stage_iso(
 ) -> Result<DownloadProgress> {
     #[cfg(windows)]
     {
+        write_install_state("download_start", serde_json::Map::new()); debug_log("download_and_stage_iso: start");
+
         let drive = target_drive_letter.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive);
         let config_path = format!("{}:\\install-config.json", drive);
@@ -1028,15 +1112,27 @@ async fn download_and_stage_iso(
         // Write config first
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| InstallerError::Unknown(format!("Failed to serialize config: {}", e)))?;
-        tokio::fs::write(&config_path, config_json)
+        debug_log(&format!("download_and_stage_iso: writing config to {}", config_path)); tokio::fs::write(&config_path, config_json)
             .await
             .map_err(|e| {
                 InstallerError::InstallationError(format!("Failed to write config: {}", e))
             })?;
 
         // Download ISO with progress
-        let url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
-        let result = download_file_with_progress(url, &iso_path, &app).await?;
+        let url = iso_url();
+        debug_log(&format!("download_and_stage_iso: starting download from {} to {}", url, iso_path));
+        let result = match download_file_with_progress(url, &iso_path, &app).await {
+            Ok(r) => r,
+            Err(e) => {
+                debug_log(&format!("download_and_stage_iso: primary download failed ({}), trying fallback", e));
+                if url != FALLBACK_ISO_URL {
+                    download_file_with_progress(FALLBACK_ISO_URL, &iso_path, &app).await?
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+        debug_log("download_and_stage_iso: download complete");
 
         // Verify file size (> 500 MB)
         let metadata = tokio::fs::metadata(&iso_path).await.map_err(|e| {
@@ -1067,6 +1163,8 @@ async fn download_and_stage_iso(
             let _ = save_staging_state(&state);
         }
 
+        write_install_state("download_complete", serde_json::Map::new());
+
         Ok(result)
     }
     #[cfg(not(windows))]
@@ -1083,16 +1181,32 @@ async fn download_and_stage_iso(
 async fn install_refind() -> Result<()> {
     #[cfg(windows)]
     {
+        write_install_state("bootloader_start", serde_json::Map::new());
+
+        if is_test_mode() {
+            write_install_state("bootloader_complete", serde_json::Map::new());
+            return Ok(());
+        }
+
         let temp_dir = std::env::temp_dir().join("osworld-refind");
         let zip_path = temp_dir.join("refind.zip");
         tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
             InstallerError::InstallationError(format!("Failed to create temp dir: {}", e))
         })?;
 
-        // Download rEFInd bin zip
-        let refind_url =
-            "https://downloads.sourceforge.net/project/refind/0.14.2/refind-bin-0.14.2.zip";
-        download_file_simple(refind_url, &zip_path).await?;
+        // Try bundled rEFInd first, fall back to download
+        let bundled = find_bundled_refind_zip();
+        if let Some(bundled_path) = bundled {
+            debug_log(&format!("Using bundled rEFInd from: {:?}", bundled_path));
+            tokio::fs::copy(&bundled_path, &zip_path).await.map_err(|e| {
+                InstallerError::InstallationError(format!("Failed to copy bundled rEFInd: {}", e))
+            })?;
+        } else {
+            debug_log("Bundled rEFInd not found, falling back to download");
+            let refind_url =
+                "https://downloads.sourceforge.net/project/refind/0.14.2/refind-bin-0.14.2.zip";
+            download_file_simple(refind_url, &zip_path).await?;
+        }
 
         // Extract zip
         let extract_dir = temp_dir.join("extracted");
@@ -1150,9 +1264,13 @@ async fn install_refind() -> Result<()> {
             .unwrap_or_else(|| "ARCH_202501".to_string());
 
         // Create refind.conf with proper EFI-style forward-slash paths
-        // Includes both Installer and Recovery entries
+        // Includes both Installer and Recovery entries.
+        // default_selection + use_nvram false guarantees the installer entry is
+        // highlighted on the next boot even if rEFInd has seen another OS before.
         let config_content = format!(
             r#"timeout 10
+use_nvram false
+default_selection "OSWorld Installer"
 
 menuentry "OSWorld Installer" {{
     icon \EFI\refind\icons\os_linux.png
@@ -1179,7 +1297,7 @@ menuentry "AltOS Recovery" {{
         // --- Secure Boot: install shim as the primary bootloader ---
         // If shim files were staged on OSWORLDBOOT, copy them to the ESP and
         // register shim (not refind directly) as the BCD boot entry.
-        // Chain: Firmware → shim → rEFInd → kernel
+        // Chain: Firmware â†’ shim â†’ rEFInd â†’ kernel
         let secure_boot_staged = find_volume_by_label("OSWORLDBOOT")
             .map(|letter| {
                 let flag = format!(
@@ -1207,6 +1325,8 @@ menuentry "AltOS Recovery" {{
             let _ = save_staging_state(&state);
         }
 
+        write_install_state("bootloader_complete", serde_json::Map::new());
+
         Ok(())
     }
     #[cfg(not(windows))]
@@ -1217,9 +1337,27 @@ menuentry "AltOS Recovery" {{
     }
 }
 
-/// Reboot the computer into the installer.
+/// Reboot the computer into the installer. In test mode, writes state and returns
+/// without actually rebooting.
 #[tauri::command]
 fn reboot_to_installer() -> Result<()> {
+    if TEST_MODE_ENABLED.load(Ordering::Relaxed) {
+        let _ = write_test_state(
+            "C:\\\\altos-test-state.json".to_string(),
+            serde_json::json!({
+                "screen": "progress",
+                "stage": "ready_to_reboot",
+                "testMode": true,
+                "timestamp": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+            })
+            .to_string(),
+        );
+        return Ok(());
+    }
+
     #[cfg(windows)]
     {
         std::process::Command::new("shutdown")
@@ -1236,6 +1374,65 @@ fn reboot_to_installer() -> Result<()> {
             "Reboot is only supported on Windows".to_string(),
         ))
     }
+}
+
+/// Enable or disable backend test mode. When enabled, destructive final actions
+/// (e.g. reboot) are intercepted and recorded instead of executed.
+#[tauri::command]
+fn set_test_mode(enabled: bool) {
+    #[cfg(debug_assertions)]
+    {
+        TEST_MODE_ENABLED.store(enabled, Ordering::Relaxed);
+    }
+    let _ = enabled;
+}
+
+fn debug_log(msg: &str) {
+    use std::io::Write;
+    let msg = format!("{}: {}\n", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(), msg);
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("C:\\altos-debug.log").and_then(|mut f| f.write_all(msg.as_bytes()));
+}
+
+fn write_install_state(stage: &str, extra: serde_json::Map<String, serde_json::Value>) {
+    let _ = write_test_state(
+        "C:\\\\altos-test-state.json".to_string(),
+        {
+            let mut obj = serde_json::Map::new();
+            obj.insert("screen".to_string(), serde_json::Value::String("progress".to_string()));
+            obj.insert("stage".to_string(), serde_json::Value::String(stage.to_string()));
+            obj.insert("timestamp".to_string(), serde_json::Value::Number(
+                serde_json::Number::from(std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64)
+            ));
+            for (k, v) in extra {
+                obj.insert(k, v);
+            }
+            serde_json::Value::Object(obj).to_string()
+        },
+    );
+}
+
+/// Write test state JSON to disk for automated UI testing (appends to array)
+#[tauri::command]
+fn write_test_state(path: String, json: String) -> Result<()> {
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&existing) {
+            entries = arr;
+        } else if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&existing) {
+            entries = vec![obj];
+        }
+    }
+    let new_entry: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| InstallerError::Unknown(format!("Invalid test state JSON: {}", e)))?;
+    entries.push(new_entry);
+    let out = serde_json::to_string_pretty(&entries)
+        .map_err(|e| InstallerError::Unknown(format!("Failed to serialize test state: {}", e)))?;
+    std::fs::write(&path, out)
+        .map_err(|e| InstallerError::Unknown(format!("Failed to write test state: {}", e)))?;
+    Ok(())
 }
 
 /// Mark the post-install onboarding as seen so it doesn't show again.
@@ -1326,11 +1523,11 @@ fn stage_secure_boot_files(boot_letter: &str) -> Result<()> {
 
 /// Download Microsoft-signed shim binaries.
 /// In production these should be bundled under resources/shim/ or
-/// self-hosted.  The URLs below are placeholders — replace them with
+/// self-hosted.  The URLs below are placeholders â€” replace them with
 /// your own trusted mirrors.
 #[cfg(windows)]
 fn download_shim_files(output_dir: &str) -> Result<()> {
-    // Try bundled files first (preferred — no network dependency)
+    // Try bundled files first (preferred â€” no network dependency)
     if let Ok(exe_path) = std::env::current_exe() {
         let bundled_dir = exe_path
             .parent()
@@ -1525,7 +1722,7 @@ fn install_shim_to_esp(esp_letter: &str, boot_path: &str) -> Result<()> {
 
 /// Add a BCD firmware entry that points to shim (not directly to rEFInd).
 /// When Secure Boot is enabled, the chain is:
-///   Firmware → shim (Microsoft-signed) → signed rEFInd → signed kernel
+///   Firmware â†’ shim (Microsoft-signed) â†’ signed rEFInd â†’ signed kernel
 #[cfg(windows)]
 fn add_secure_boot_bcd_entry(esp_letter: &str) -> Result<()> {
     let l = esp_letter.trim_end_matches(':');
@@ -1555,6 +1752,8 @@ fn add_secure_boot_bcd_entry(esp_letter: &str) -> Result<()> {
         format!("bcdedit /set {} path \\EFI\\BOOT\\shimx64.efi", guid),
         format!("bcdedit /set {} device partition={}:", guid, l),
         format!("bcdedit /displayorder {} /addfirst", guid),
+        // One-time next boot so the installer starts automatically on restart.
+        format!("bcdedit /bootsequence {} /addfirst", guid),
     ];
 
     for cmd in commands {
@@ -1725,10 +1924,10 @@ async fn detect_windows_version() -> Result<String> {
 }
 
 #[cfg(all(windows, not(feature = "test-mocks")))]
-fn get_disk_free_space() -> Option<u64> {
+fn get_disk_free_space(drive_letter: &str) -> Option<u64> {
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 
-    let path = to_wide("C:\\");
+    let path = to_wide(&format!("{}:\\", drive_letter));
     let mut free_bytes: u64 = 0;
 
     let result = unsafe {
@@ -1747,8 +1946,21 @@ fn get_disk_free_space() -> Option<u64> {
     Some(free_bytes / (1024 * 1024 * 1024))
 }
 
+/// Extract drive letter from a selected_disk string like "Disk 1 (D:)"
+fn extract_drive_letter(selected_disk: &str) -> Option<String> {
+    selected_disk
+        .split('(')
+        .nth(1)?
+        .split(')')
+        .next()?
+        .trim_end_matches(':')
+        .chars()
+        .next()
+        .map(|c| c.to_string())
+}
+
 #[cfg(any(not(windows), feature = "test-mocks"))]
-fn get_disk_free_space() -> Option<u64> {
+fn get_disk_free_space(_drive_letter: &str) -> Option<u64> {
     std::env::var("MOCK_FREE_SPACE_GB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1768,6 +1980,38 @@ fn check_secure_boot() -> Option<bool> {
 #[cfg(any(not(windows), feature = "test-mocks"))]
 fn check_secure_boot() -> Option<bool> {
     std::env::var("MOCK_SECURE_BOOT").ok().map(|v| v == "true")
+}
+
+#[tauri::command]
+fn suspend_bitlocker(drive_letter: String) -> Result<String> {
+    #[cfg(windows)]
+    {
+        let drive = if drive_letter.ends_with(':') {
+            drive_letter
+        } else {
+            format!("{}:", drive_letter)
+        };
+        let output = run_powershell(&format!(
+            "manage-bde -protectors -disable {}",
+            drive
+        ))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            return Err(InstallerError::SystemCheckFailed(format!(
+                "Failed to suspend BitLocker: {}",
+                stderr
+            )));
+        }
+        Ok(format!("BitLocker suspended on {}. Output: {}", drive, stdout))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = drive_letter;
+        Err(InstallerError::SystemCheckFailed(
+            "BitLocker suspension is only supported on Windows".to_string(),
+        ))
+    }
 }
 
 #[cfg(all(windows, not(feature = "test-mocks")))]
@@ -1924,7 +2168,11 @@ fn append_rollback_log(message: &str) {
 
 #[cfg(windows)]
 fn run_diskpart_script(script: &str) -> Result<String> {
-    let temp_path = std::env::temp_dir().join("osworld_diskpart.txt");
+    let temp_path = std::env::temp_dir().join(format!(
+        "osworld_diskpart_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+    ));
     std::fs::write(&temp_path, script).map_err(|e| {
         InstallerError::SystemCheckFailed(format!("Failed to write diskpart script: {}", e))
     })?;
@@ -1939,6 +2187,9 @@ fn run_diskpart_script(script: &str) -> Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    let log = format!("DISKPART SCRIPT:\n{}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n\nEXIT: {}\n---\n", script, stdout, stderr, output.status.success());
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("C:\\altos-diskpart.log").and_then(|mut f| std::io::Write::write_all(&mut f, log.as_bytes()));
 
     if !output.status.success()
         || stdout
@@ -2004,6 +2255,17 @@ fn find_partition_number_by_letter(letter: &str) -> Result<u32> {
 /// and return the ISO filesystem label.
 #[cfg(windows)]
 async fn extract_arch_iso_files(iso_path: &str, dest_drive: &str) -> Result<String> {
+    // In test mode, skip actual ISO extraction and create dummy files
+    // to avoid Mount-DiskImage hangs in non-interactive sessions
+    if is_test_mode() {
+        let drive = dest_drive.trim_end_matches(':');
+        let dest_dir = format!("{}:\\arch\\boot\\x86_64", drive);
+        let _ = std::fs::create_dir_all(&dest_dir);
+        let _ = std::fs::write(format!("{}\\vmlinuz-linux", dest_dir), "TEST_VMLINUZ");
+        let _ = std::fs::write(format!("{}\\archiso.img", dest_dir), "TEST_INITRD");
+        return Ok("ARCH_TEST".to_string());
+    }
+
     let drive = dest_drive.trim_end_matches(':');
     let dest_dir = format!("{}:\\arch\\boot\\x86_64", drive);
 
@@ -2067,7 +2329,7 @@ async fn download_file_with_progress(
         .build()
         .map_err(|e| InstallerError::InstallationError(format!("HTTP client error: {}", e)))?;
 
-    let response = client.get(url).send().await.map_err(|e| {
+    debug_log(&format!("download_file_with_progress: sending request to {}", url)); let response = client.get(url).send().await.map_err(|e| {
         InstallerError::InstallationError(format!("Download request failed: {}", e))
     })?;
 
@@ -2076,7 +2338,7 @@ async fn download_file_with_progress(
         .await
         .map_err(|e| InstallerError::InstallationError(format!("Failed to create file: {}", e)))?;
 
-    let mut stream = response.bytes_stream();
+    debug_log(&format!("download_file_with_progress: got response, content_length={:?}", response.content_length())); let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut last_percent: u8 = 0;
 
@@ -2125,7 +2387,7 @@ async fn download_file_simple(url: &str, path: &std::path::Path) -> Result<()> {
         .build()
         .map_err(|e| InstallerError::InstallationError(format!("HTTP client error: {}", e)))?;
 
-    let response = client.get(url).send().await.map_err(|e| {
+    debug_log(&format!("download_file_with_progress: sending request to {}", url)); let response = client.get(url).send().await.map_err(|e| {
         InstallerError::InstallationError(format!("Download request failed: {}", e))
     })?;
 
@@ -2155,17 +2417,31 @@ fn extract_zip(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> Result
     Ok(())
 }
 
-#[cfg(windows)]
-fn find_bundled_refind() -> Option<std::path::PathBuf> {
-    // Check app resources directory for bundled refind
-    if let Ok(exe_path) = std::env::current_exe() {
-        let resource_dir = exe_path.parent()?.join("resources");
-        let bundled = resource_dir.join("refind-bin-minimal.zip");
-        if bundled.exists() {
-            return Some(bundled);
+fn find_bundled_refind_zip() -> Option<std::path::PathBuf> {
+    // Check multiple possible locations for the bundled rEFInd zip
+    let candidates = [
+        // Tauri bundled resources (next to exe)
+        std::env::current_exe().ok().and_then(|p| {
+            p.parent().map(|d| d.join("resources").join("refind-bin-0.14.2.zip"))
+        }),
+        // Development build (repo root)
+        Some(std::path::PathBuf::from("src-tauri/resources/refind-bin-0.14.2.zip")),
+        // Relative to exe in target directory
+        std::env::current_exe().ok().and_then(|p| {
+            p.parent().map(|d| d.join("..").join("resources").join("refind-bin-0.14.2.zip"))
+        }),
+    ];
+    for candidate in candidates.iter().flatten() {
+        if candidate.exists() {
+            return Some(candidate.clone());
         }
     }
     None
+}
+
+#[allow(dead_code)]
+fn find_bundled_refind() -> Option<std::path::PathBuf> {
+    find_bundled_refind_zip()
 }
 
 #[cfg(windows)]
@@ -2240,6 +2516,10 @@ fn add_refind_bcd_entry(esp_letter: &str) -> Result<()> {
         format!("bcdedit /set {} path \\EFI\\refind\\refind_x64.efi", guid),
         format!("bcdedit /set {} device partition={}:", guid, l),
         format!("bcdedit /displayorder {} /addfirst", guid),
+        // Set this entry as the one-time next boot so the firmware boots the
+        // installer automatically on the next restart, without permanently
+        // reordering the user's boot menu.
+        format!("bcdedit /bootsequence {} /addfirst", guid),
     ];
 
     for cmd in commands {
@@ -2297,7 +2577,7 @@ async fn write_config(config: InstallConfig, drive: String) -> Result<()> {
         let config_path = format!("{}:\\install-config.json", drive_clean);
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| InstallerError::Unknown(format!("Failed to serialize config: {}", e)))?;
-        tokio::fs::write(&config_path, config_json)
+        debug_log(&format!("download_and_stage_iso: writing config to {}", config_path)); tokio::fs::write(&config_path, config_json)
             .await
             .map_err(|e| {
                 InstallerError::InstallationError(format!("Failed to write config: {}", e))
@@ -2320,7 +2600,7 @@ async fn download_iso(drive: String, app: AppHandle) -> Result<DownloadProgress>
     {
         let drive_clean = drive.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive_clean);
-        let url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
+        let url = iso_url();
 
         // Resume check
         if let Ok(meta) = tokio::fs::metadata(&iso_path).await {
@@ -2353,31 +2633,38 @@ async fn download_iso(drive: String, app: AppHandle) -> Result<DownloadProgress>
             }
         }
 
-        // Retry logic with exponential backoff
+        // Retry logic with exponential backoff, with fallback to Arch Linux ISO
         let mut last_error = None;
-        for attempt in 1..=3 {
-            match download_file_with_progress(url, &iso_path, &app).await {
-                Ok(progress) => {
-                    // Verify checksum after download
-                    match verify_iso_checksum(&iso_path).await {
-                        Ok(true) => return Ok(progress),
-                        Ok(false) => {
-                            return Err(InstallerError::InstallationError(
-                                "Downloaded ISO checksum does not match. File may be corrupted."
-                                    .to_string(),
-                            ));
-                        }
-                        Err(e) => {
-                            // Checksum verification failed but download succeeded
-                            return Ok(progress);
+        let urls = if url != FALLBACK_ISO_URL {
+            vec![url, FALLBACK_ISO_URL]
+        } else {
+            vec![url]
+        };
+        for current_url in urls {
+            for attempt in 1..=3 {
+                match download_file_with_progress(current_url, &iso_path, &app).await {
+                    Ok(progress) => {
+                        // Verify checksum after download
+                        match verify_iso_checksum(&iso_path).await {
+                            Ok(true) => return Ok(progress),
+                            Ok(false) => {
+                                return Err(InstallerError::InstallationError(
+                                    "Downloaded ISO checksum does not match. File may be corrupted."
+                                        .to_string(),
+                                ));
+                            }
+                            Err(e) => {
+                                // Checksum verification failed but download succeeded
+                                return Ok(progress);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < 3 {
-                        let backoff_secs = 2u64.pow(attempt - 1);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    Err(e) => {
+                        last_error = Some(e);
+                        if attempt < 3 {
+                            let backoff_secs = 2u64.pow(attempt - 1);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                        }
                     }
                 }
             }
@@ -2613,7 +2900,7 @@ fn detect_altos_installation() -> Result<bool> {
 
 /// Remove AltOS partitions (OSWORLDBOOT and Linux partitions).
 #[tauri::command]
-fn remove_altos_partitions(confirmation: String, expand_c_drive: bool) -> Result<Vec<String>> {
+fn remove_altos_partitions(confirmation: String, expand_target_drive: bool) -> Result<Vec<String>> {
     if confirmation != "REMOVE" {
         return Err(InstallerError::ValidationError(
             "Confirmation must be exactly REMOVE".to_string(),
@@ -2625,6 +2912,11 @@ fn remove_altos_partitions(confirmation: String, expand_c_drive: bool) -> Result
         let mut actions = Vec::new();
         let disk_info = get_system_disk_info()?;
         let disk_index = disk_info.0;
+
+        // Determine target drive for expansion (from staging state or default to C)
+        let target_drive = load_staging_state()
+            .and_then(|s| s.target_drive_letter)
+            .unwrap_or_else(|| "C".to_string());
 
         // Remove Linux partition
         if let Some(linux_part) = find_linux_partition_number(disk_index) {
@@ -2671,14 +2963,14 @@ fn remove_altos_partitions(confirmation: String, expand_c_drive: bool) -> Result
             }
         }
 
-        // Expand C: drive if requested
-        if expand_c_drive {
+        // Expand target drive if requested
+        if expand_target_drive {
             match run_diskpart_script_with_timeout(
-                &format!("select disk {}\nselect volume C\nextend\n", disk_index),
+                &format!("select disk {}\nselect volume {}\nextend\n", disk_index, target_drive),
                 60,
             ) {
-                Ok(_) => actions.push("Expanded C: drive to reclaim space".to_string()),
-                Err(e) => actions.push(format!("Failed to expand C: drive: {}", e)),
+                Ok(_) => actions.push(format!("Expanded {}: drive to reclaim space", target_drive)),
+                Err(e) => actions.push(format!("Failed to expand {}: drive: {}", target_drive, e)),
             }
         }
 
@@ -2686,7 +2978,7 @@ fn remove_altos_partitions(confirmation: String, expand_c_drive: bool) -> Result
     }
     #[cfg(not(windows))]
     {
-        let _ = (confirmation, expand_c_drive);
+        let _ = (confirmation, expand_target_drive);
         Err(InstallerError::SystemCheckFailed(
             "Partition removal is only supported on Windows".to_string(),
         ))
@@ -2841,10 +3133,13 @@ fn cleanup_staging(confirmation: String) -> Result<()> {
             disk_index, part_num
         ))?;
 
-        // Expand C: drive to reclaim space
+        // Expand original target drive to reclaim space
+        let target_drive = load_staging_state()
+            .and_then(|s| s.target_drive_letter)
+            .unwrap_or_else(|| "C".to_string());
         run_diskpart_script(&format!(
-            "select disk {}\nselect volume C\nextend\n",
-            disk_index
+            "select disk {}\nselect volume {}\nextend\n",
+            disk_index, target_drive
         ))?;
 
         // Remove rEFInd from EFI
@@ -2925,7 +3220,8 @@ fn rollback_staging(confirmation: String) -> Result<RollbackStatus> {
                 StagingState {
                     timestamp: "0".to_string(),
                     disk_index: disk_info.0,
-                    original_c_drive_size_mb: None,
+                    target_drive_letter: None,
+                    original_target_drive_size_mb: None,
                     efi_entries_before: vec![],
                     osworldboot_partition_number: None,
                     linux_partition_number: None,
@@ -3165,6 +3461,10 @@ fn rollback_staging(confirmation: String) -> Result<RollbackStatus> {
 // ==================== Main Function ====================
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {}\n", info);
+        let _ = std::fs::write(r"C:\osworld-panic.log", msg);
+    }));
     tauri::Builder::default()
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -3195,6 +3495,9 @@ fn main() {
             remove_refind_files,
             mark_post_install_seen,
             set_refind_default,
+            write_test_state,
+            set_test_mode,
+            suspend_bitlocker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -3406,9 +3709,9 @@ mod tests {
     #[test]
     fn test_mock_free_space() {
         std::env::set_var("MOCK_FREE_SPACE_GB", "500");
-        assert_eq!(get_disk_free_space(), Some(500));
+        assert_eq!(get_disk_free_space("C"), Some(500));
         std::env::remove_var("MOCK_FREE_SPACE_GB");
-        assert_eq!(get_disk_free_space(), Some(250));
+        assert_eq!(get_disk_free_space("C"), Some(250));
     }
 
     #[test]

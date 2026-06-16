@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=AltOS First-Boot Wizard
+Comment=Guide new users through initial AltOS setup
+Exec=/usr/share/altos/first-boot/wizard.sh
+Icon=altos-logo
+Type=Application
+Terminal=false
+Categories=System;Settings;
+OnlyShowIn=KDE;
+X-KDE-AutostartScript=true
