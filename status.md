@@ -1,56 +1,71 @@
-# AltOS Dual-Boot Install Status
+# AltOS Installer — Project Status
 
-**Saved:** 2026-06-14
-**State:** Paused — user taking a break before forcing one-time boot into AltOS installer.
+**Saved:** 2026-06-16  
+**State:** In progress — all four product phases architected; Windows installer v0.2.0 building, real-hardware test pending.
 
-## What We Did
+## What Was Completed This Session
 
-1. Rebuilt custom AltOS ISO (`out/altos-2026.06.14-x86_64.iso`) with:
-   - OpenSSH + Tailscale pre-installed and enabled
-   - Dual-boot installer now shrinks the **largest** NTFS partition (D:) instead of the first one
-   - Kernel cmdline UEFI bypass `altos_skip_uefi_check` for VM testing
-   - GRUB serial console for headless VM verification
+1. **Phase 1 — Unattended boot fix**
+   - rEFInd now defaults to `OSWorld Installer` and ignores NVRAM last-boot
+   - Windows installer uses `bcdedit /bootsequence` for one-time next boot
+   - Tagged `v0.1.1` and triggered GitHub Actions release build
 
-2. VM end-to-end test passed.
+2. **Phase 2 — Edition system**
+   - Added `packages/home.yaml`, `gaming.yaml`, `creative.yaml`, `privacy.yaml`
+   - Installer reads edition from `install-config.json` and applies the right package set
+   - Edition selection UI wired through to Rust backend
 
-3. Staged the install on Windows test PC `jachym-pc` (Tailscale IP `100.103.228.71`):
-   - Created ~5 GB FAT32 `OSWORLDBOOT` partition on Disk 1 (Samsung 500 GB NVMe)
-   - Copied custom ISO contents + `arch.iso` loop image to `OSWORLDBOOT`
-   - Installed rEFInd to the Windows ESP
-   - Created a rEFInd firmware boot entry: `{f5d0ebf2-47c0-11f0-b0c6-001a7dda7115}`
-   - Rebooted
+3. **Phase 3 — Per-app customization**
+   - Browser picker (Brave / Chromium / Firefox)
+   - Email client picker (Thunderbird / Evolution / Geary)
+   - Music player picker (Strawberry / Rhythmbox / VLC)
+   - LibreOffice with Windows-style skins toggle
+   - Customization saved to `install-config.json` and applied during pacstrap
 
-4. On reboot, rEFInd loaded but auto-selected the **existing Arch Linux** install instead of `OSWORLDBOOT`.
+4. **Phase 4 — App store + monetization**
+   - Added AltOS App Store (PyQt6) with curated pacman/flatpak catalog
+   - App Store copied to target system and added to apps menu
+   - Added Stripe payment-link flow for paid editions
+   - Added `verify_edition_payment` backend hook for future license-server integration
 
-## Current Problem
+5. **Automated testing**
+   - Created `vm-test/spam-e2e.sh` to build ISO and run back-to-back end-to-end tests
+   - Supports `--loop N` and `--editions home,gaming,creative,privacy`
 
-The target PC already had an Arch Linux install that boots by default. We have not yet booted the AltOS installer from `OSWORLDBOOT`.
+6. **Release infrastructure**
+   - Bumped version to `0.2.0`
+   - Updated release workflow to attach ISO automatically and include code-signing placeholders
+   - Added `CODESIGN.md` with Azure Trusted Signing and certificate instructions
 
-## Next Step (when resuming)
+## Current Blocker
 
-From inside the existing Arch Linux, force a one-time boot into `OSWORLDBOOT`:
+Real-hardware test on `jachym-pc` is still pending. The PC is currently running the existing Arch install and is offline on Tailscale.
+
+## Next Steps
+
+1. Build `v0.2.0` ISO and Windows installer (GitHub Actions after tagging `v0.2.0`).
+2. On `jachym-pc`:
+   - Reboot to Windows
+   - Run the new `AltOS-Installer.exe`
+   - Select an edition and continue
+   - The installer should reboot automatically into the AltOS installer
+3. Verify the install completes and the first-boot wizard / App Store work.
+4. Replace the Stripe placeholder links in `src-tauri/src/main.rs` with real payment links.
+5. Set up code signing secrets when ready.
+
+## Quick Commands
 
 ```bash
-# Find the OSWORLDBOOT partition
-lsblk -f
+# Tag and build v0.2.0 release
+git tag v0.2.0
+git push origin v0.2.0
 
-# Create a temporary EFI boot entry (replace /dev/nvme0n1 and -p 5 with actual disk/partition)
-sudo efibootmgr -c -d /dev/nvme0n1 -p 5 -L "AltOS Installer" -l '\EFI\BOOT\BOOTx64.EFI'
-
-# Note the new 4-digit boot number, e.g. Boot0005, then set it as next boot
-sudo efibootmgr -n 0005
-sudo reboot
+# Run automated VM test loop
+cd vm-test
+./spam-e2e.sh --editions home,gaming,creative,privacy
 ```
 
-## Important Notes
+## Notes
 
-- Windows Disk 1 has C: (full), D: (data, ~370 GB free) — installer will shrink D:.
-- Existing Arch install will **not** be touched unless its partitions conflict with the new space taken from D:.
-- After AltOS installs and reboots, someone must run `tailscale login` on the target PC before remote SSH via Tailscale works.
-- Tailscale target IP: `100.103.228.71`
-- Windows SSH user/pass: `JA` / `Klokan2009`
-
-## Open Questions
-
-- Does the user want to keep the existing Arch install, or replace it with AltOS?
-- What is the exact `OSWORLDBOOT` device path/partition number? (Use `lsblk -f` to confirm.)
+- Tailscale target IP: `100.103.228.71` (target must run `tailscale login` after install)
+- Windows test PC user/pass: `JA` / `Klokan2009`

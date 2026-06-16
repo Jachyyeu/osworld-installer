@@ -1,6 +1,7 @@
 # OSWorld Installer
 
-A modern Linux distribution installer built with **Tauri v2 Beta** and **React + TypeScript**.
+A modern Linux distribution installer built with **Tauri v2** and **React + TypeScript**.
+> Install a polished, macOS-style Arch Linux ecosystem in a few clicks.
 
 ## Features
 
@@ -8,8 +9,10 @@ A modern Linux distribution installer built with **Tauri v2 Beta** and **React +
 - **System Check**: Detects Windows version, disk space, RAM, CPU, Secure Boot, and BitLocker status
 - **Disk Selection**: Interactive disk selection with size slider (Dual Boot only)
 - **User Setup**: Form validation for username, computer name, and password
-- **Edition Selection**: Choose from Home (Free), Gaming ($9.99), or Create ($14.99)
+- **Edition Selection**: Choose from Home (Free), Gaming, Creative, or Privacy editions
+- **Per-App Customization**: Pick your browser, email client, music player, and toggle LibreOffice
 - **Installation Progress**: Real-time progress tracking with cancel option
+- **AltOS App Store**: Install curated apps after setup with one click
 
 ## Tech Stack
 

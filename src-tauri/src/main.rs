@@ -66,8 +66,8 @@ pub enum InstallerError {
 // ISO download configuration
 // Set USE_CUSTOM_ISO to true when a custom release is published.
 const USE_CUSTOM_ISO: bool = true;
-const CUSTOM_ISO_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.1.0/altos-x86_64.iso";
-const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.1.0/altos-x86_64.iso.sha256";
+const CUSTOM_ISO_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.0/altos-x86_64.iso";
+const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.0/altos-x86_64.iso.sha256";
 const FALLBACK_ISO_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
 const FALLBACK_ISO_CHECKSUM_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
 
