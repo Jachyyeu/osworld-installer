@@ -23,6 +23,8 @@ vm-test/*.fd
 vm-test/*.ppm
 vm-test/*.sock
 vm-test/ovmf_vars.fd
+vm-test/install-config.json
+vm-test/mnt/
 *.windows
 
 # Kimi session data

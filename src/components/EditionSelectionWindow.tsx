@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Zap, Gamepad2, Palette, Shield, ArrowRight, ArrowLeft, CheckCircle, Settings2 } from 'lucide-react';
-import { setEdition, setAppCustomization, writeTestState } from '../lib/tauri';
+import { Zap, Gamepad2, Palette, Shield, ArrowRight, ArrowLeft, CheckCircle, Settings2, ExternalLink } from 'lucide-react';
+import { setEdition, setAppCustomization, getEditionPaymentUrl, verifyEditionPayment, writeTestState } from '../lib/tauri';
 
 interface EditionSelectionWindowProps {
   onNext: () => void;
@@ -67,6 +67,101 @@ const MUSIC_PLAYERS = [
 
 const TEST_STATE_PATH = 'C:\\altos-test-state.json';
 
+interface EditionActionButtonsProps {
+  selectedEdition: string | null;
+  isLoading: boolean;
+  paymentPending: boolean;
+  paymentVerified: boolean;
+  onContinue: () => void;
+  onPurchase: () => void;
+  onVerifyPayment: () => void;
+}
+
+function EditionActionButtons({
+  selectedEdition,
+  isLoading,
+  paymentPending,
+  paymentVerified,
+  onContinue,
+  onPurchase,
+  onVerifyPayment,
+}: EditionActionButtonsProps) {
+  if (!selectedEdition) {
+    return (
+      <button
+        disabled
+        className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white bg-[#3a3f47] cursor-not-allowed text-altos-text-secondary"
+      >
+        <span>Continue</span>
+        <ArrowRight className="w-5 h-5" />
+      </button>
+    );
+  }
+
+  const edition = EDITIONS.find((e) => e.id === selectedEdition);
+  const isPaid = edition ? edition.price > 0 : false;
+  const canContinue = !isPaid || paymentVerified;
+
+  if (isPaid && !paymentVerified) {
+    return (
+      <div className="flex items-center gap-3">
+        {paymentPending && (
+          <button
+            onClick={onVerifyPayment}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-altos-text bg-[#1a1d21] hover:bg-[#252a31] transition-colors disabled:opacity-50"
+          >
+            {isLoading ? (
+              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            ) : (
+              <CheckCircle className="w-5 h-5" />
+            )}
+            <span>I've paid — Continue</span>
+          </button>
+        )}
+        <button
+          onClick={onPurchase}
+          disabled={isLoading}
+          className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-50"
+        >
+          <span>Purchase {edition?.name} — ${edition?.price}</span>
+          <ExternalLink className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onContinue}
+      disabled={isLoading || !canContinue}
+      className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white transition-colors duration-150 ${
+        canContinue && !isLoading
+          ? 'bg-altos-blue hover:bg-altos-blue-hover'
+          : 'bg-[#3a3f47] cursor-not-allowed text-altos-text-secondary'
+      }`}
+    >
+      {isLoading ? (
+        <>
+          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <span>Loading...</span>
+        </>
+      ) : (
+        <>
+          <span>Continue</span>
+          <ArrowRight className="w-5 h-5" />
+        </>
+      )}
+    </button>
+  );
+}
+
 export default function EditionSelectionWindow({ onNext, onBack, autoplay = false }: EditionSelectionWindowProps) {
   const [selectedEdition, setSelectedEdition] = useState<string | null>(null);
   const [showCustomize, setShowCustomize] = useState(false);
@@ -75,6 +170,8 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
   const [musicPlayer, setMusicPlayer] = useState('strawberry');
   const [includeOfficeSuite, setIncludeOfficeSuite] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [paymentPending, setPaymentPending] = useState(false);
+  const [paymentVerified, setPaymentVerified] = useState(false);
 
   const handleContinue = async () => {
     if (!selectedEdition) return;
@@ -105,6 +202,7 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
   useEffect(() => {
     if (!autoplay) return;
     setSelectedEdition('home');
+    setPaymentVerified(true);
     const t = setTimeout(() => {
       handleContinueRef.current();
     }, 800);
@@ -150,7 +248,11 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
         {EDITIONS.map((edition) => (
           <button
             key={edition.id}
-            onClick={() => setSelectedEdition(edition.id)}
+            onClick={() => {
+              setSelectedEdition(edition.id);
+              setPaymentPending(false);
+              setPaymentVerified(false);
+            }}
             className={`relative p-5 rounded-xl border text-left transition-all duration-150 ${
               selectedEdition === edition.id
                 ? 'border-altos-blue bg-altos-blue-glow'
@@ -236,30 +338,35 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
           <span>Back</span>
         </button>
 
-        <button
-          onClick={handleContinue}
-          disabled={!selectedEdition || isLoading}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-white transition-colors duration-150 ${
-            selectedEdition && !isLoading
-              ? 'bg-altos-blue hover:bg-altos-blue-hover'
-              : 'bg-[#3a3f47] cursor-not-allowed text-altos-text-secondary'
-          }`}
-        >
-          {isLoading ? (
-            <>
-              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span>Loading...</span>
-            </>
-          ) : (
-            <>
-              <span>Continue</span>
-              <ArrowRight className="w-5 h-5" />
-            </>
-          )}
-        </button>
+        <EditionActionButtons
+          selectedEdition={selectedEdition}
+          isLoading={isLoading}
+          paymentPending={paymentPending}
+          paymentVerified={paymentVerified}
+          onContinue={handleContinue}
+          onPurchase={() => {
+            if (!selectedEdition) return;
+            const edition = EDITIONS.find((e) => e.id === selectedEdition);
+            if (!edition || edition.price === 0) return;
+            setPaymentPending(true);
+            getEditionPaymentUrl(selectedEdition).then((url) => {
+              window.open(url, '_blank');
+            });
+          }}
+          onVerifyPayment={async () => {
+            if (!selectedEdition) return;
+            setIsLoading(true);
+            try {
+              const ok = await verifyEditionPayment(selectedEdition);
+              setPaymentVerified(ok);
+              if (!ok) {
+                alert('Payment could not be verified. Please complete payment and try again.');
+              }
+            } finally {
+              setIsLoading(false);
+            }
+          }}
+        />
       </div>
     </div>
   );

@@ -46,6 +46,14 @@ export async function setEdition(edition: string): Promise<void> {
   return invoke('set_edition', { edition });
 }
 
+export async function getEditionPaymentUrl(edition: string): Promise<string> {
+  return invoke('get_edition_payment_url', { edition });
+}
+
+export async function verifyEditionPayment(edition: string, transactionId?: string): Promise<boolean> {
+  return invoke('verify_edition_payment', { edition, transactionId });
+}
+
 export async function setAppCustomization(
   browser?: string,
   emailClient?: string,

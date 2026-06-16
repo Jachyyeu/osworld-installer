@@ -118,7 +118,7 @@ parse_config() {
   echo -e "${BLUE}       Hostname: ${hostname}${RESET}"
   echo -e "${BLUE}       User:     ${username}${RESET}"
   echo -e "${BLUE}       Edition:  ${ALTOS_EDITION}${RESET}"
-
+}
 
 # --- Main ---------------------------------------------------
 main() {
@@ -211,11 +211,14 @@ main() {
   # Step 9 — System configuration
   configure_system "$hostname" "$username" "$password" "$timezone" "$locale" "$keymap"
 
-  # Step 9b — Post-install scripts from packages/basic.yaml
+  # Step 9b — Post-install scripts from edition package YAML
   run_post_install_scripts "$username"
 
-  # Step 9c — Enable services from packages/basic.yaml
+  # Step 9c — Enable services from edition package YAML
   enable_services_from_yaml
+
+  # Step 9d — Copy AltOS App Store to target system
+  install_app_store
 
   # Step 10 — Migrate Windows files (only in dual-boot mode)
   if [[ "$mode" == "dualboot" ]]; then
@@ -417,6 +420,45 @@ EOF
     log_info "Boot failure monitor enabled."
     echo -e "${GREEN}[OK] Recovery boot detection enabled.${RESET}"
   fi
+}
+
+install_app_store() {
+  echo ""
+  log_info "Installing AltOS App Store..."
+
+  local store_src="${INSTALLER_DIR}/../first-boot/altos-store"
+  local store_dst="/mnt/usr/share/altos/altos-store"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    log_info "[DRY] Would copy AltOS App Store to ${store_dst}."
+    echo -e "${BLUE}[DRY] Would install AltOS App Store.${RESET}"
+    return 0
+  fi
+
+  if [[ ! -d "$store_src" ]]; then
+    log_warn "AltOS App Store source not found at ${store_src}. Skipping."
+    echo -e "${YELLOW}[WARN] AltOS App Store source not found. Skipping.${RESET}"
+    return 0
+  fi
+
+  mkdir -p "$store_dst"
+  cp -r "${store_src}/"* "$store_dst/"
+  chmod +x "$store_dst/store.py"
+
+  # Desktop entry for all users
+  mkdir -p /mnt/usr/share/applications
+  cp "$store_dst/altos-store.desktop" /mnt/usr/share/applications/altos-store.desktop
+
+  # Also add to current user's menu
+  local user_apps_dir="/mnt/home/${username}/.local/share/applications"
+  if [[ -d "/mnt/home/${username}" ]]; then
+    mkdir -p "$user_apps_dir"
+    cp "$store_dst/altos-store.desktop" "$user_apps_dir/altos-store.desktop"
+    chown -R "${username}:${username}" "/mnt/home/${username}/.local" 2>/dev/null || true
+  fi
+
+  log_info "AltOS App Store installed."
+  echo -e "${GREEN}[OK] AltOS App Store installed.${RESET}"
 }
 
 finalize_installation() {

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AltOS App Store
+Comment=Install curated apps on AltOS
+Exec=/usr/share/altos/altos-store/store.py
+Icon=system-software-install
+Terminal=false
+Categories=System;Settings;

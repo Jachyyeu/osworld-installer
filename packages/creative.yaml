@@ -47,7 +47,9 @@ base_packages:
   - fastfetch
   - htop
   - nano
+  - flatpak
   - python-pyqt6
+  - python-yaml
   - curl
 
   # KDE configuration tools

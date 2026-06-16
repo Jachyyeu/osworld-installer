@@ -71,6 +71,11 @@ const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-insta
 const FALLBACK_ISO_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
 const FALLBACK_ISO_CHECKSUM_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
 
+// Stripe payment links for paid editions. Replace with your own links.
+const STRIPE_GAMING_LINK: &str = "https://buy.stripe.com/test_gaming_placeholder";
+const STRIPE_CREATIVE_LINK: &str = "https://buy.stripe.com/test_creative_placeholder";
+const STRIPE_PRIVACY_LINK: &str = "https://buy.stripe.com/test_privacy_placeholder";
+
 fn iso_url() -> &'static str {
     if USE_CUSTOM_ISO { CUSTOM_ISO_URL } else { FALLBACK_ISO_URL }
 }
@@ -813,6 +818,35 @@ fn set_edition(edition: String, state: State<AppState>) -> Result<()> {
     };
 
     Ok(())
+}
+
+/// Return the Stripe payment link for a paid edition.
+#[tauri::command]
+fn get_edition_payment_url(edition: String) -> Result<String> {
+    match edition.as_str() {
+        "gaming" => Ok(STRIPE_GAMING_LINK.to_string()),
+        "creative" => Ok(STRIPE_CREATIVE_LINK.to_string()),
+        "privacy" => Ok(STRIPE_PRIVACY_LINK.to_string()),
+        "home" => Err(InstallerError::ValidationError(
+            "Home edition is free".to_string(),
+        )),
+        _ => Err(InstallerError::ValidationError(
+            "Invalid edition".to_string(),
+        )),
+    }
+}
+
+/// Placeholder payment verification. In production this would call your
+/// backend/license server to confirm the payment before continuing.
+#[tauri::command]
+fn verify_edition_payment(edition: String, _transaction_id: Option<String>) -> Result<bool> {
+    // MVP: free editions are always verified; paid editions require a real
+    // Stripe integration. Returning true here lets the UI flow continue once
+    // the user has clicked through the payment step.
+    match edition.as_str() {
+        "home" => Ok(true),
+        _ => Ok(true),
+    }
 }
 
 /// Set per-app customization choices.
@@ -3538,6 +3572,8 @@ fn main() {
             set_disk_config,
             set_edition,
             set_app_customization,
+            get_edition_payment_url,
+            verify_edition_payment,
             start_installation,
             cancel_installation,
             calculate_estimated_time,

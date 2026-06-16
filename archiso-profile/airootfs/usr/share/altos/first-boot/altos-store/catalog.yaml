@@ -1,0 +1,167 @@
+# ============================================================
+# AltOS App Store catalog
+# Curated apps installable after first boot.
+# ============================================================
+
+categories:
+  - id: browsers
+    name: Web Browsers
+  - id: communication
+    name: Communication
+  - id: media
+    name: Media & Entertainment
+  - id: productivity
+    name: Productivity
+  - id: development
+    name: Development
+  - id: gaming
+    name: Gaming
+  - id: creative
+    name: Creative Tools
+  - id: privacy
+    name: Privacy & Security
+
+apps:
+  - id: brave
+    name: Brave
+    description: Privacy-focused web browser with built-in ad blocking.
+    category: browsers
+    install_method: pacman
+    package: brave
+    free: true
+
+  - id: chromium
+    name: Chromium
+    description: Open-source browser project that powers Chrome.
+    category: browsers
+    install_method: pacman
+    package: chromium
+    free: true
+
+  - id: firefox
+    name: Firefox
+    description: Fast, privacy-focused browser from Mozilla.
+    category: browsers
+    install_method: pacman
+    package: firefox
+    free: true
+
+  - id: thunderbird
+    name: Thunderbird
+    description: Free email client from Mozilla.
+    category: communication
+    install_method: pacman
+    package: thunderbird
+    free: true
+
+  - id: discord
+    name: Discord
+    description: Voice, video and text chat for gamers and communities.
+    category: communication
+    install_method: flatpak
+    package: com.discordapp.Discord
+    free: true
+
+  - id: telegram
+    name: Telegram Desktop
+    description: Fast and secure messaging app.
+    category: communication
+    install_method: flatpak
+    package: org.telegram.desktop
+    free: true
+
+  - id: spotify
+    name: Spotify
+    description: Music streaming service.
+    category: media
+    install_method: flatpak
+    package: com.spotify.Client
+    free: true
+
+  - id: strawberry
+    name: Strawberry Music Player
+    description: Music player and collection organizer.
+    category: media
+    install_method: pacman
+    package: strawberry
+    free: true
+
+  - id: vlc
+    name: VLC
+    description: Versatile media player.
+    category: media
+    install_method: pacman
+    package: vlc
+    free: true
+
+  - id: obs
+    name: OBS Studio
+    description: Free software for video recording and live streaming.
+    category: creative
+    install_method: pacman
+    package: obs-studio
+    free: true
+
+  - id: blender
+    name: Blender
+    description: Open-source 3D creation suite.
+    category: creative
+    install_method: pacman
+    package: blender
+    free: true
+
+  - id: krita
+    name: Krita
+    description: Professional digital painting application.
+    category: creative
+    install_method: pacman
+    package: krita
+    free: true
+
+  - id: steam
+    name: Steam
+    description: Valve's gaming platform.
+    category: gaming
+    install_method: pacman
+    package: steam
+    free: true
+
+  - id: lutris
+    name: Lutris
+    description: Open gaming platform for Linux.
+    category: gaming
+    install_method: pacman
+    package: lutris
+    free: true
+
+  - id: code
+    name: Visual Studio Code
+    description: Popular code editor from Microsoft.
+    category: development
+    install_method: pacman
+    package: code
+    free: true
+
+  - id: docker
+    name: Docker
+    description: Container platform for developers.
+    category: development
+    install_method: pacman
+    package: docker
+    free: true
+
+  - id: keepassxc
+    name: KeePassXC
+    description: Cross-platform password manager.
+    category: privacy
+    install_method: pacman
+    package: keepassxc
+    free: true
+
+  - id: tor-browser
+    name: Tor Browser
+    description: Anonymous web browsing.
+    category: privacy
+    install_method: flatpak
+    package: com.github.micahflee.torbrowser-launcher
+    free: true
