@@ -42,6 +42,19 @@ export async function setDiskConfig(
   return invoke('set_disk_config', { diskName, linuxSizeGb, filesystem, encrypt, luksPassword });
 }
 
+export async function setEdition(edition: string): Promise<void> {
+  return invoke('set_edition', { edition });
+}
+
+export async function setAppCustomization(
+  browser?: string,
+  emailClient?: string,
+  musicPlayer?: string,
+  includeOfficeSuite?: boolean
+): Promise<void> {
+  return invoke('set_app_customization', { browser, emailClient, musicPlayer, includeOfficeSuite });
+}
+
 export async function setUserConfig(
   username: string,
   computerName: string,

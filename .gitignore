@@ -16,6 +16,13 @@ out/
 vm-test/*.img
 vm-test/*.iso
 vm-test/*.qcow2
+vm-test/*.log
+vm-test/*.out
+vm-test/*.pid
+vm-test/*.fd
+vm-test/*.ppm
+vm-test/*.sock
+vm-test/ovmf_vars.fd
 *.windows
 
 # Kimi session data

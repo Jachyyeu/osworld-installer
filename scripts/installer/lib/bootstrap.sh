@@ -13,7 +13,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_DIR="$(dirname "$SCRIPT_DIR")"
 ALTOS_DIR="$(dirname "$INSTALLER_DIR")"
-PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
+ALTOS_EDITION="${ALTOS_EDITION:-home}"
+PACKAGES_YAML="${ALTOS_DIR}/packages/${ALTOS_EDITION}.yaml"
+if [[ ! -f "$PACKAGES_YAML" ]]; then
+  PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
+fi
 
 # Extract a simple indented list from YAML (e.g. base_packages or services.enabled)
 # Usage: extract_yaml_list <file> <section_key> <indent_level>
@@ -48,6 +52,41 @@ format_and_mount_partitions() {
   run mount "$HOME_PART" /mnt/home
 
   echo -e "${GREEN}[OK] All partitions mounted under /mnt.${RESET}"
+}
+
+apply_app_customization() {
+  # Reads environment variables set by install.sh and adjusts the package list.
+  # Expects a single argument: name of the array variable to modify in-place.
+  local -n pkgs="$1"
+  local browser="${ALTOS_BROWSER:-brave}"
+  local email="${ALTOS_EMAIL_CLIENT:-thunderbird}"
+  local music="${ALTOS_MUSIC_PLAYER:-strawberry}"
+  local include_office="${ALTOS_INCLUDE_OFFICE:-true}"
+
+  # Browser swap
+  for i in "${!pkgs[@]}"; do
+    case "${pkgs[$i]}" in
+      firefox|google-chrome-stable|chromium|brave|librewolf)
+        unset 'pkgs[$i]'
+        ;;
+    esac
+  done
+  pkgs+=("$browser")
+
+  # Email client
+  pkgs+=("$email")
+
+  # Music player
+  pkgs+=("$music")
+
+  # Office suite toggle
+  if [[ "$include_office" != "true" ]]; then
+    for i in "${!pkgs[@]}"; do
+      if [[ "${pkgs[$i]}" == libreoffice-fresh ]]; then
+        unset 'pkgs[$i]'
+      fi
+    done
+  fi
 }
 
 bootstrap_system() {
@@ -91,9 +130,12 @@ bootstrap_system() {
           packages+=("$pkg")
         fi
       done <<< "$yaml_pkgs"
-      echo -e "${GREEN}[OK] Added packages from basic.yaml.${RESET}"
+      echo -e "${GREEN}[OK] Added packages from ${PACKAGES_YAML}.${RESET}"
     fi
   fi
+
+  # Apply per-app customization choices
+  apply_app_customization packages
 
   if [[ "$DRY_RUN" == true ]]; then
     echo -e "${BLUE}[DRY] Would run: pacstrap /mnt ${packages[*]}${RESET}"

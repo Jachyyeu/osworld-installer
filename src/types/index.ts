@@ -19,7 +19,14 @@ export interface InstallConfig {
   username?: string;
   computer_name?: string;
   password?: string;
+  edition?: Edition;
+  browser?: string;
+  email_client?: string;
+  music_player?: string;
+  include_office_suite?: boolean;
 }
+
+export type Edition = 'home' | 'gaming' | 'creative' | 'privacy';
 
 export interface SystemInfo {
   windows_version: string;

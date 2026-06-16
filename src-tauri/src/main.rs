@@ -29,12 +29,25 @@ pub struct InstallConfig {
     pub username: Option<String>,
     pub computer_name: Option<String>,
     pub password: Option<String>,
+    pub edition: Option<Edition>,
+    pub browser: Option<String>,
+    pub email_client: Option<String>,
+    pub music_player: Option<String>,
+    pub include_office_suite: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum InstallType {
     DualBoot,
     ReplaceWindows,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+pub enum Edition {
+    Home,
+    Gaming,
+    Creative,
+    Privacy,
 }
 
 // Custom error types for proper error handling
@@ -777,6 +790,51 @@ fn set_disk_config(
         luks_password,
         &state,
     )
+}
+
+/// Set the selected edition (Home, Gaming, Creative, Privacy)
+#[tauri::command]
+fn set_edition(edition: String, state: State<AppState>) -> Result<()> {
+    let mut config = state
+        .config
+        .lock()
+        .map_err(|e| InstallerError::Unknown(format!("Failed to lock state: {}", e)))?;
+
+    config.edition = match edition.as_str() {
+        "home" => Some(Edition::Home),
+        "gaming" => Some(Edition::Gaming),
+        "creative" => Some(Edition::Creative),
+        "privacy" => Some(Edition::Privacy),
+        _ => {
+            return Err(InstallerError::ValidationError(
+                "Invalid edition".to_string(),
+            ))
+        }
+    };
+
+    Ok(())
+}
+
+/// Set per-app customization choices.
+#[tauri::command]
+fn set_app_customization(
+    browser: Option<String>,
+    email_client: Option<String>,
+    music_player: Option<String>,
+    include_office_suite: Option<bool>,
+    state: State<AppState>,
+) -> Result<()> {
+    let mut config = state
+        .config
+        .lock()
+        .map_err(|e| InstallerError::Unknown(format!("Failed to lock state: {}", e)))?;
+
+    config.browser = browser;
+    config.email_client = email_client;
+    config.music_player = music_player;
+    config.include_office_suite = include_office_suite;
+
+    Ok(())
 }
 
 /// Start installation process (legacy simulation â€” kept for compatibility)
@@ -3478,6 +3536,8 @@ fn main() {
             get_available_disks,
             set_user_config,
             set_disk_config,
+            set_edition,
+            set_app_customization,
             start_installation,
             cancel_installation,
             calculate_estimated_time,
@@ -3528,6 +3588,11 @@ mod tests {
             username: Some("user".to_string()),
             computer_name: Some("pc".to_string()),
             password: Some("pass1234".to_string()),
+            edition: Some(Edition::Home),
+            browser: Some("brave".to_string()),
+            email_client: Some("thunderbird".to_string()),
+            music_player: Some("spotify".to_string()),
+            include_office_suite: Some(true),
         };
 
         let json = serde_json::to_string(&original).unwrap();

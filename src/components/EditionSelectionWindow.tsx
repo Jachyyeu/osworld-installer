@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Zap, Gamepad2, Palette, ArrowRight, ArrowLeft, CheckCircle } from 'lucide-react';
-import { writeTestState } from '../lib/tauri';
+import { Zap, Gamepad2, Palette, Shield, ArrowRight, ArrowLeft, CheckCircle, Settings2 } from 'lucide-react';
+import { setEdition, setAppCustomization, writeTestState } from '../lib/tauri';
 
 interface EditionSelectionWindowProps {
   onNext: () => void;
@@ -10,8 +10,8 @@ interface EditionSelectionWindowProps {
 
 const EDITIONS = [
   {
-    id: 'basic',
-    name: 'Basic',
+    id: 'home',
+    name: 'Home',
     subtitle: 'Free',
     price: 0,
     icon: <Zap className="w-5 h-5" />,
@@ -22,26 +22,58 @@ const EDITIONS = [
     id: 'gaming',
     name: 'Gaming',
     subtitle: 'Performance',
-    price: 0,
+    price: 9.99,
     icon: <Gamepad2 className="w-5 h-5" />,
     description: 'Optimized for gaming with Steam, Proton, and GPU drivers.',
     features: ['Steam pre-installed', 'Proton GE', 'GameMode', 'MangoHud'],
   },
   {
-    id: 'create',
-    name: 'Create',
+    id: 'creative',
+    name: 'Creative',
     subtitle: 'Pro',
-    price: 0,
+    price: 14.99,
     icon: <Palette className="w-5 h-5" />,
     description: 'Creative workstation with design and video tools.',
     features: ['Blender', 'Krita', 'OBS Studio', 'DaVinci Resolve'],
   },
+  {
+    id: 'privacy',
+    name: 'Privacy',
+    subtitle: 'Secure',
+    price: 9.99,
+    icon: <Shield className="w-5 h-5" />,
+    description: 'Hardened privacy-focused setup with encrypted defaults.',
+    features: [' hardened Firefox', 'DNS-over-HTTPS', 'MAC randomization', 'VPN tools'],
+  },
 ];
 
-const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
+const BROWSERS = [
+  { id: 'brave', name: 'Brave' },
+  { id: 'chromium', name: 'Chromium' },
+  { id: 'firefox', name: 'Firefox' },
+];
+
+const EMAIL_CLIENTS = [
+  { id: 'thunderbird', name: 'Thunderbird' },
+  { id: 'evolution', name: 'Evolution' },
+  { id: 'geary', name: 'Geary' },
+];
+
+const MUSIC_PLAYERS = [
+  { id: 'strawberry', name: 'Strawberry' },
+  { id: 'rhythmbox', name: 'Rhythmbox' },
+  { id: 'vlc', name: 'VLC' },
+];
+
+const TEST_STATE_PATH = 'C:\\altos-test-state.json';
 
 export default function EditionSelectionWindow({ onNext, onBack, autoplay = false }: EditionSelectionWindowProps) {
   const [selectedEdition, setSelectedEdition] = useState<string | null>(null);
+  const [showCustomize, setShowCustomize] = useState(false);
+  const [browser, setBrowser] = useState('brave');
+  const [emailClient, setEmailClient] = useState('thunderbird');
+  const [musicPlayer, setMusicPlayer] = useState('strawberry');
+  const [includeOfficeSuite, setIncludeOfficeSuite] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleContinue = async () => {
@@ -49,10 +81,16 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
     setIsLoading(true);
     const edition = EDITIONS.find((e) => e.id === selectedEdition);
     try {
+      await setEdition(selectedEdition);
+      await setAppCustomization(browser, emailClient, musicPlayer, includeOfficeSuite);
       await writeTestState(TEST_STATE_PATH, {
         screen: 'edition',
         edition: selectedEdition,
         price: edition?.price ?? 0,
+        browser,
+        emailClient,
+        musicPlayer,
+        includeOfficeSuite,
         timestamp: Date.now(),
       });
     } catch {
@@ -66,12 +104,38 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
 
   useEffect(() => {
     if (!autoplay) return;
-    setSelectedEdition('basic');
+    setSelectedEdition('home');
     const t = setTimeout(() => {
       handleContinueRef.current();
     }, 800);
     return () => clearTimeout(t);
   }, [autoplay]);
+
+  const renderSelector = (
+    label: string,
+    options: { id: string; name: string }[],
+    value: string,
+    onChange: (id: string) => void
+  ) => (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-altos-text-secondary uppercase tracking-wider">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => (
+          <button
+            key={opt.id}
+            onClick={() => onChange(opt.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              value === opt.id
+                ? 'bg-altos-blue text-white'
+                : 'bg-[#1a1d21] text-altos-text-secondary hover:text-altos-text'
+            }`}
+          >
+            {opt.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -111,9 +175,14 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
                       {edition.subtitle}
                     </span>
                   </div>
-                  {selectedEdition === edition.id && (
-                    <CheckCircle className="w-5 h-5 text-altos-blue flex-shrink-0" />
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-altos-text">
+                      {edition.price === 0 ? 'Free' : `$${edition.price}`}
+                    </span>
+                    {selectedEdition === edition.id && (
+                      <CheckCircle className="w-5 h-5 text-altos-blue flex-shrink-0" />
+                    )}
+                  </div>
                 </div>
                 <p className="text-sm text-altos-text-secondary mb-3">{edition.description}</p>
                 <div className="flex flex-wrap gap-2">
@@ -131,6 +200,31 @@ export default function EditionSelectionWindow({ onNext, onBack, autoplay = fals
           </button>
         ))}
       </div>
+
+      <button
+        onClick={() => setShowCustomize((s) => !s)}
+        className="flex items-center gap-2 text-sm text-altos-text-secondary hover:text-altos-text transition-colors"
+      >
+        <Settings2 className="w-4 h-4" />
+        {showCustomize ? 'Hide customization' : 'Customize default apps'}
+      </button>
+
+      {showCustomize && (
+        <div className="bg-[#1a1d21] border border-altos-border rounded-xl p-4 space-y-4">
+          {renderSelector('Web browser', BROWSERS, browser, setBrowser)}
+          {renderSelector('Email client', EMAIL_CLIENTS, emailClient, setEmailClient)}
+          {renderSelector('Music player', MUSIC_PLAYERS, musicPlayer, setMusicPlayer)}
+          <label className="flex items-center gap-3 text-sm text-altos-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeOfficeSuite}
+              onChange={(e) => setIncludeOfficeSuite(e.target.checked)}
+              className="w-4 h-4 rounded border-altos-border bg-altos-card text-altos-blue focus:ring-altos-blue"
+            />
+            Include LibreOffice with Windows-style skins
+          </label>
+        </div>
+      )}
 
       <div className="flex justify-between pt-2">
         <button

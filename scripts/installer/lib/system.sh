@@ -11,7 +11,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_DIR="$(dirname "$SCRIPT_DIR")"
 ALTOS_DIR="$(dirname "$INSTALLER_DIR")"
-PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
+ALTOS_EDITION="${ALTOS_EDITION:-home}"
+PACKAGES_YAML="${ALTOS_DIR}/packages/${ALTOS_EDITION}.yaml"
+
+# Fall back to basic.yaml if the edition-specific file does not exist
+if [[ ! -f "$PACKAGES_YAML" ]]; then
+  PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
+fi
 
 configure_system() {
   local hostname="$1"

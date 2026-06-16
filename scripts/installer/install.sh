@@ -91,6 +91,9 @@ parse_config() {
 
   echo -e "${BLUE}[INFO] Loading installation configuration...${RESET}"
 
+  local config_json
+  config_json=$(python3 -c "import json; print(json.dumps(json.load(open('$config_file'))))")
+
   target_disk=$(python3 -c "import json; print(json.load(open('$config_file')).get('target_disk',''))")
   mode=$(python3 -c "import json; print(json.load(open('$config_file')).get('mode','wipe'))")
   hostname=$(python3 -c "import json; print(json.load(open('$config_file')).get('hostname','archlinux'))")
@@ -100,12 +103,22 @@ parse_config() {
   locale=$(python3 -c "import json; print(json.load(open('$config_file')).get('locale','en_US.UTF-8'))")
   keymap=$(python3 -c "import json; print(json.load(open('$config_file')).get('keymap','us'))")
 
+  # Edition and per-app customization
+  ALTOS_EDITION=$(python3 -c "import json; print(json.load(open('$config_file')).get('edition','home').lower())")
+  ALTOS_BROWSER=$(python3 -c "import json; print(json.load(open('$config_file')).get('browser','brave'))")
+  ALTOS_EMAIL_CLIENT=$(python3 -c "import json; print(json.load(open('$config_file')).get('email_client','thunderbird'))")
+  ALTOS_MUSIC_PLAYER=$(python3 -c "import json; print(json.load(open('$config_file')).get('music_player','strawberry'))")
+  ALTOS_INCLUDE_OFFICE=$(python3 -c "import json; print(str(json.load(open('$config_file')).get('include_office_suite', True)).lower())")
+
+  export ALTOS_EDITION ALTOS_BROWSER ALTOS_EMAIL_CLIENT ALTOS_MUSIC_PLAYER ALTOS_INCLUDE_OFFICE
+
   echo -e "${GREEN}[OK] Configuration loaded.${RESET}"
   echo -e "${BLUE}       Disk:     ${target_disk}${RESET}"
   echo -e "${BLUE}       Mode:     ${mode}${RESET}"
   echo -e "${BLUE}       Hostname: ${hostname}${RESET}"
   echo -e "${BLUE}       User:     ${username}${RESET}"
-}
+  echo -e "${BLUE}       Edition:  ${ALTOS_EDITION}${RESET}"
+
 
 # --- Main ---------------------------------------------------
 main() {
