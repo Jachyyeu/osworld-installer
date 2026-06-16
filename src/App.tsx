@@ -1,18 +1,29 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { InstallType, InstallConfig } from './types';
+import { setTestMode } from './lib/tauri';
 import WelcomeWindow from './components/WelcomeWindow';
 import SystemCheckWindow from './components/SystemCheckWindow';
 import DiskSelectionWindow from './components/DiskSelectionWindow';
 import UserSetupWindow from './components/UserSetupWindow';
+import EditionSelectionWindow from './components/EditionSelectionWindow';
 import InstallationProgressWindow from './components/InstallationProgressWindow';
 import UninstallerWindow from './components/UninstallerWindow';
 
-type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'progress' | 'uninstaller';
+const TEST_MODE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_TEST_MODE === 'true';
+const AUTOPLAY = TEST_MODE;
+
+type WindowStep = 'welcome' | 'systemcheck' | 'diskselection' | 'usersetup' | 'edition' | 'progress' | 'uninstaller';
 
 function App() {
   const [currentStep, setCurrentStep] = useState<WindowStep>('welcome');
   const [installType, setInstallTypeState] = useState<InstallType | null>(null);
   const [, setConfig] = useState<InstallConfig>({});
+
+  useEffect(() => {
+    if (TEST_MODE) {
+      setTestMode(true).catch(() => {});
+    }
+  }, []);
 
   const handleInstallTypeSelect = (type: InstallType) => {
     setInstallTypeState(type);
@@ -33,6 +44,10 @@ function App() {
   };
 
   const handleUserSetupComplete = () => {
+    setCurrentStep('edition');
+  };
+
+  const handleEditionComplete = () => {
     setCurrentStep('progress');
   };
 
@@ -47,7 +62,7 @@ function App() {
   const renderCurrentWindow = () => {
     switch (currentStep) {
       case 'welcome':
-        return <WelcomeWindow onSelect={handleInstallTypeSelect} />;
+        return <WelcomeWindow onSelect={handleInstallTypeSelect} autoplay={AUTOPLAY} />;
       case 'systemcheck':
         return (
           <SystemCheckWindow
@@ -60,6 +75,7 @@ function App() {
           <DiskSelectionWindow
             onNext={handleDiskSelectionComplete}
             onBack={() => handleBack('systemcheck')}
+            autoplay={AUTOPLAY}
           />
         );
       case 'usersetup':
@@ -67,10 +83,19 @@ function App() {
           <UserSetupWindow
             onNext={handleUserSetupComplete}
             onBack={() => handleBack(installType === 'dualboot' ? 'diskselection' : 'systemcheck')}
+            autoplay={AUTOPLAY}
+          />
+        );
+      case 'edition':
+        return (
+          <EditionSelectionWindow
+            onNext={handleEditionComplete}
+            onBack={() => handleBack('usersetup')}
+            autoplay={AUTOPLAY}
           />
         );
       case 'progress':
-        return <InstallationProgressWindow />;
+        return <InstallationProgressWindow testMode={TEST_MODE} />;
       case 'uninstaller':
         return <UninstallerWindow onBack={() => setCurrentStep('welcome')} />;
       default:
@@ -82,6 +107,7 @@ function App() {
     { id: 'systemcheck', label: 'System Check' },
     ...(installType === 'dualboot' ? [{ id: 'diskselection', label: 'Disk Selection' }] : []),
     { id: 'usersetup', label: 'User Setup' },
+    { id: 'edition', label: 'Edition' },
   ];
 
   const activeStepIndex = stepList.findIndex(s => s.id === currentStep);

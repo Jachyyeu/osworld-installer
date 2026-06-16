@@ -91,14 +91,8 @@ impl AppState {
 static TEST_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 fn is_test_mode() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        TEST_MODE_ENABLED.load(Ordering::Relaxed)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
+    TEST_MODE_ENABLED.load(Ordering::Relaxed)
+
 }
 
 // System information structure
@@ -920,6 +914,7 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
 
         // Check free space on target drive
         let free_gb = get_disk_free_space(&target_drive).unwrap_or(0);
+
         let required_gb = linux_size_gb + 2 + buffer_gb; // linux + boot + buffer
         if free_gb < required_gb {
             return Err(InstallerError::SystemCheckFailed(format!(
@@ -929,6 +924,7 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
         }
 
         write_install_state("prepare_start", serde_json::Map::new()); debug_log("prepare_staging: after write_install_state prepare_start");
+
 
         // Capture pre-staging state for rollback
         let target_size_output = run_powershell(&format!("(Get-Partition -DriveLetter {}).Size", target_drive))?;
@@ -1017,6 +1013,7 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
         // would otherwise fail this heuristic.)
         if !is_test_mode() {
             let free_after_gb = get_disk_free_space(&target_drive).unwrap_or(0);
+
             let total_gb = if total_size_mb > 0 {
                 total_size_mb / 1024
             } else {
@@ -1032,6 +1029,7 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
                 return Err(InstallerError::SystemCheckFailed(format!(
                     "{}: drive free space is too low after shrink ({}%). At least 15% is required.",
                     target_drive, free_percent
+
                 )));
             }
         }
@@ -1104,6 +1102,7 @@ async fn download_and_stage_iso(
     #[cfg(windows)]
     {
         write_install_state("download_start", serde_json::Map::new()); debug_log("download_and_stage_iso: start");
+
 
         let drive = target_drive_letter.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive);
@@ -1187,6 +1186,7 @@ async fn install_refind() -> Result<()> {
             write_install_state("bootloader_complete", serde_json::Map::new());
             return Ok(());
         }
+
 
         let temp_dir = std::env::temp_dir().join("osworld-refind");
         let zip_path = temp_dir.join("refind.zip");
@@ -1391,6 +1391,7 @@ fn debug_log(msg: &str) {
     use std::io::Write;
     let msg = format!("{}: {}\n", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(), msg);
     let _ = std::fs::OpenOptions::new().create(true).append(true).open("C:\\altos-debug.log").and_then(|mut f| f.write_all(msg.as_bytes()));
+
 }
 
 fn write_install_state(stage: &str, extra: serde_json::Map<String, serde_json::Value>) {
@@ -3498,6 +3499,7 @@ fn main() {
             write_test_state,
             set_test_mode,
             suspend_bitlocker,
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

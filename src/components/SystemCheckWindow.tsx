@@ -17,8 +17,10 @@ import {
   X,
   ChevronRight,
 } from 'lucide-react';
-import { detectSystemInfo, detectPcManufacturer } from '../lib/tauri';
+import { detectSystemInfo, detectPcManufacturer, writeTestState } from '../lib/tauri';
 import type { SystemInfo, PcManufacturerInfo } from '../types';
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 interface SystemCheckWindowProps {
   onNext: () => void;
@@ -136,8 +138,25 @@ export default function SystemCheckWindow({ onNext, onBack }: SystemCheckWindowP
       const hasErrors = info.secure_boot_enabled || info.bitlocker_enabled;
       if (hasErrors) {
         setPhase('failed');
+        await writeTestState(TEST_STATE_PATH, {
+          screen: 'systemcheck',
+          status: 'failed',
+          failedChecks: [
+            ...(info.secure_boot_enabled ? ['secureboot'] : []),
+            ...(info.bitlocker_enabled ? ['bitlocker'] : []),
+          ],
+          manufacturer: mfr?.manufacturer ?? 'Generic',
+          timestamp: Date.now(),
+        });
       } else {
         setPhase('success');
+        await writeTestState(TEST_STATE_PATH, {
+          screen: 'systemcheck',
+          status: 'ready',
+          autoAdvance: true,
+          manufacturer: mfr?.manufacturer ?? 'Generic',
+          timestamp: Date.now(),
+        });
         setTimeout(() => {
           onNext();
         }, 1500);
@@ -145,6 +164,12 @@ export default function SystemCheckWindow({ onNext, onBack }: SystemCheckWindowP
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to detect system information');
       setPhase('error');
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'systemcheck',
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Unknown error',
+        timestamp: Date.now(),
+      });
     }
   }, [onNext]);
 

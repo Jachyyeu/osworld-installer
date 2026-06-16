@@ -13,12 +13,15 @@ import {
   ChevronDown,
   Lock,
 } from 'lucide-react';
-import { getAvailableDisks, setDiskConfig, calculateEstimatedTime } from '../lib/tauri';
+import { getAvailableDisks, setDiskConfig, calculateEstimatedTime, writeTestState } from '../lib/tauri';
 import type { DiskInfo } from '../types';
+
+const TEST_STATE_PATH = 'C:\\\\altos-test-state.json';
 
 interface DiskSelectionWindowProps {
   onNext: () => void;
   onBack: () => void;
+  autoplay?: boolean;
 }
 
 const FILESYSTEMS = [
@@ -29,7 +32,7 @@ const FILESYSTEMS = [
 
 const MIN_SIZE_GB = 20;
 
-export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWindowProps) {
+export default function DiskSelectionWindow({ onNext, onBack, autoplay = false }: DiskSelectionWindowProps) {
   const [disks, setDisks] = useState<DiskInfo[]>([]);
   const [selectedDisk, setSelectedDisk] = useState<string | null>(null);
   const [linuxSizeGb, setLinuxSizeGb] = useState<number>(50);
@@ -69,7 +72,12 @@ export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWin
     setError(null);
 
     try {
-      const availableDisks = await getAvailableDisks();
+      const availableDisks = autoplay
+        ? [
+            { name: 'Disk 0 (C:)', size_gb: 512, free_space_gb: 200 },
+            { name: 'Disk 1 (D:)', size_gb: 1024, free_space_gb: 800 },
+          ]
+        : await getAvailableDisks();
       setDisks(availableDisks);
 
       if (availableDisks.length > 0) {
@@ -162,12 +170,31 @@ export default function DiskSelectionWindow({ onNext, onBack }: DiskSelectionWin
         encrypt,
         encrypt ? luksPassword : undefined
       );
+      const disk = disks.find((d) => d.name === selectedDisk);
+      await writeTestState(TEST_STATE_PATH, {
+        screen: 'disk',
+        selectedDisk,
+        linuxSizeGb,
+        freeSpaceGb: disk?.free_space_gb ?? 0,
+        timestamp: Date.now(),
+      });
       onNext();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save disk configuration');
       setIsSaving(false);
     }
   };
+
+  const handleContinueRef = useRef(handleContinue);
+  handleContinueRef.current = handleContinue;
+
+  useEffect(() => {
+    if (!autoplay || isLoading || !selectedDisk || isSaving) return;
+    const t = setTimeout(() => {
+      handleContinueRef.current();
+    }, 800);
+    return () => clearTimeout(t);
+  }, [autoplay, isLoading, selectedDisk, isSaving]);
 
   return (
     <div className="space-y-6">
