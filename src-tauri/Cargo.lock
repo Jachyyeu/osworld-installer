@@ -2829,7 +2829,7 @@ dependencies = [
 
 [[package]]
 name = "osworld-installer"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "futures-util",
  "reqwest 0.12.28",
