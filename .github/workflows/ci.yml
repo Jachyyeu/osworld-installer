@@ -19,16 +19,23 @@ jobs:
           rustup component add rustfmt clippy
 
       - name: Check formatting
-        run: cd src-tauri && cargo fmt -- --check
+        run: cd src-tauri && cargo fmt -- --check 2>&1 | tee fmt.log
 
       - name: Run Clippy
-        run: cd src-tauri && cargo clippy -- -D warnings
+        run: cd src-tauri && cargo clippy -- -D warnings 2>&1 | tee clippy.log
 
       - name: Run tests with mocks
-        run: cd src-tauri && cargo test --features test-mocks
+        run: cd src-tauri && cargo test --features test-mocks 2>&1 | tee test-mocks.log
 
       - name: Run tests (no features)
-        run: cd src-tauri && cargo test
+        run: cd src-tauri && cargo test 2>&1 | tee test.log
+
+      - name: Upload Rust logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-logs
+          path: src-tauri/*.log
 
   rust-windows:
     runs-on: windows-latest
@@ -54,13 +61,20 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci 2>&1 | tee npm-ci.log
 
       - name: Type check
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit 2>&1 | tee tsc.log
 
       - name: Build frontend
-        run: npm run build
+        run: npm run build 2>&1 | tee build.log
+
+      - name: Upload frontend logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-logs
+          path: '*.log'
 
   scripts:
     runs-on: ubuntu-latest
