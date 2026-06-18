@@ -65,23 +65,40 @@ pub enum InstallerError {
 
 // ISO download configuration
 // Set USE_CUSTOM_ISO to true when a custom release is published.
+#[allow(dead_code)]
 const USE_CUSTOM_ISO: bool = true;
-const CUSTOM_ISO_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.0/altos-x86_64.iso";
-const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.0/altos-x86_64.iso.sha256";
+#[allow(dead_code)]
+const CUSTOM_ISO_URL: &str =
+    "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.1/altos-x86_64.iso";
+#[allow(dead_code)]
+const CUSTOM_ISO_CHECKSUM_URL: &str = "https://github.com/jachyyeu/osworld-installer/releases/download/v0.2.1/altos-x86_64.iso.sha256";
+#[allow(dead_code)]
 const FALLBACK_ISO_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso";
-const FALLBACK_ISO_CHECKSUM_URL: &str = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
+#[allow(dead_code)]
+const FALLBACK_ISO_CHECKSUM_URL: &str =
+    "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.sha256";
 
 // Stripe payment links for paid editions. Replace with your own links.
 const STRIPE_GAMING_LINK: &str = "https://buy.stripe.com/test_gaming_placeholder";
 const STRIPE_CREATIVE_LINK: &str = "https://buy.stripe.com/test_creative_placeholder";
 const STRIPE_PRIVACY_LINK: &str = "https://buy.stripe.com/test_privacy_placeholder";
 
+#[allow(dead_code)]
 fn iso_url() -> &'static str {
-    if USE_CUSTOM_ISO { CUSTOM_ISO_URL } else { FALLBACK_ISO_URL }
+    if USE_CUSTOM_ISO {
+        CUSTOM_ISO_URL
+    } else {
+        FALLBACK_ISO_URL
+    }
 }
 
+#[allow(dead_code)]
 fn iso_checksum_url() -> &'static str {
-    if USE_CUSTOM_ISO { CUSTOM_ISO_CHECKSUM_URL } else { FALLBACK_ISO_CHECKSUM_URL }
+    if USE_CUSTOM_ISO {
+        CUSTOM_ISO_CHECKSUM_URL
+    } else {
+        FALLBACK_ISO_CHECKSUM_URL
+    }
 }
 
 pub type Result<T> = std::result::Result<T, InstallerError>;
@@ -108,9 +125,9 @@ impl AppState {
 // Test mode flag: when enabled, destructive final actions (like reboot) are intercepted.
 static TEST_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
 
+#[allow(dead_code)]
 fn is_test_mode() -> bool {
     TEST_MODE_ENABLED.load(Ordering::Relaxed)
-
 }
 
 // System information structure
@@ -220,7 +237,10 @@ fn run_diskpart_script_with_timeout(script: &str, timeout_secs: u64) -> Result<S
     let temp_path = std::env::temp_dir().join(format!(
         "osworld_diskpart_{}_{}.txt",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
     ));
     std::fs::write(&temp_path, script).map_err(|e| {
         InstallerError::SystemCheckFailed(format!("Failed to write diskpart script: {}", e))
@@ -948,7 +968,8 @@ Please suspend BitLocker before continuing:\n\
 2. Run: manage-bde -protectors -disable C:\n\
 3. Continue the installation\n\
 4. After installation, re-enable with: manage-bde -protectors -enable C:\n\
-Your data remains encrypted; BitLocker is only paused during partitioning.".to_string(),
+Your data remains encrypted; BitLocker is only paused during partitioning."
+                    .to_string(),
             ));
         }
 
@@ -996,13 +1017,16 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
 
         // In test mode, use a tiny Linux partition and reduced safety buffer so the
         // automated pre-reboot test can run on disks with limited free space.
-        let linux_size_gb = if is_test_mode() { linux_size_gb.min(1) } else { linux_size_gb };
+        let linux_size_gb = if is_test_mode() {
+            linux_size_gb.min(1)
+        } else {
+            linux_size_gb
+        };
         let buffer_gb: u64 = if is_test_mode() { 1 } else { 10 };
 
         // Determine target drive letter from selected disk (e.g. "Disk 1 (D:)" -> "D")
-        let target_drive = extract_drive_letter(
-            config.selected_disk.as_deref().unwrap_or("C:")
-        ).unwrap_or_else(|| "C".to_string());
+        let target_drive = extract_drive_letter(config.selected_disk.as_deref().unwrap_or("C:"))
+            .unwrap_or_else(|| "C".to_string());
 
         // Check free space on target drive
         let free_gb = get_disk_free_space(&target_drive).unwrap_or(0);
@@ -1015,18 +1039,24 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
             )));
         }
 
-        write_install_state("prepare_start", serde_json::Map::new()); debug_log("prepare_staging: after write_install_state prepare_start");
-
+        write_install_state("prepare_start", serde_json::Map::new());
+        debug_log("prepare_staging: after write_install_state prepare_start");
 
         // Capture pre-staging state for rollback
-        let target_size_output = run_powershell(&format!("(Get-Partition -DriveLetter {}).Size", target_drive))?;
+        let target_size_output = run_powershell(&format!(
+            "(Get-Partition -DriveLetter {}).Size",
+            target_drive
+        ))?;
         let target_size_mb = String::from_utf8_lossy(&target_size_output.stdout)
             .trim()
             .parse::<u64>()
             .map(|b| b / (1024 * 1024))
             .ok();
 
-        let total_size_output = run_powershell(&format!("(Get-Partition -DriveLetter {} | Get-Disk).Size", target_drive))?;
+        let total_size_output = run_powershell(&format!(
+            "(Get-Partition -DriveLetter {} | Get-Disk).Size",
+            target_drive
+        ))?;
         let total_size_mb = String::from_utf8_lossy(&total_size_output.stdout)
             .trim()
             .parse::<u64>()
@@ -1056,7 +1086,8 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
             osworldboot_letter: None,
             stage_completed: "none".to_string(),
         };
-        save_staging_state(&initial_state)?; debug_log("prepare_staging: after save_staging_state");
+        save_staging_state(&initial_state)?;
+        debug_log("prepare_staging: after save_staging_state");
 
         // Run diskpart to shrink and create partitions (with timeout and rollback)
         let shrink_mb = (linux_size_gb + 2) * 1024;
@@ -1077,19 +1108,27 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
         );
 
         // Retry diskpart up to 3 times (temporary disk locks can cause failures)
-        let mut diskpart_result = Err(InstallerError::SystemCheckFailed("No attempts made".to_string()));
+        let mut diskpart_result = Err(InstallerError::SystemCheckFailed(
+            "No attempts made".to_string(),
+        ));
         for attempt in 1..=3 {
             diskpart_result = run_diskpart_script(&diskpart_script);
             if diskpart_result.is_ok() {
                 break;
             }
-            debug_log(&format!("prepare_staging: diskpart attempt {} failed, retrying...", attempt));
+            debug_log(&format!(
+                "prepare_staging: diskpart attempt {} failed, retrying...",
+                attempt
+            ));
             if attempt < 3 {
                 std::thread::sleep(std::time::Duration::from_secs(2));
             }
         }
 
-        debug_log(&format!("prepare_staging: diskpart_result = {}", diskpart_result.is_ok()));
+        debug_log(&format!(
+            "prepare_staging: diskpart_result = {}",
+            diskpart_result.is_ok()
+        ));
         if let Err(ref e) = diskpart_result {
             let _ = cleanup_staging("OSWORLD".to_string());
             return Err(InstallerError::InstallationError(format!(
@@ -1098,7 +1137,8 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
             )));
         }
 
-        write_install_state("prepare_partitioned", serde_json::Map::new()); debug_log("prepare_staging: after write_install_state prepare_partitioned");
+        write_install_state("prepare_partitioned", serde_json::Map::new());
+        debug_log("prepare_staging: after write_install_state prepare_partitioned");
 
         // Disk space verification: ensure target drive still has >= 15% free
         // (skipped in test mode because tiny test partitions on small drives
@@ -1121,7 +1161,6 @@ Your data remains encrypted; BitLocker is only paused during partitioning.".to_s
                 return Err(InstallerError::SystemCheckFailed(format!(
                     "{}: drive free space is too low after shrink ({}%). At least 15% is required.",
                     target_drive, free_percent
-
                 )));
             }
         }
@@ -1193,8 +1232,8 @@ async fn download_and_stage_iso(
 ) -> Result<DownloadProgress> {
     #[cfg(windows)]
     {
-        write_install_state("download_start", serde_json::Map::new()); debug_log("download_and_stage_iso: start");
-
+        write_install_state("download_start", serde_json::Map::new());
+        debug_log("download_and_stage_iso: start");
 
         let drive = target_drive_letter.trim_end_matches(':');
         let iso_path = format!("{}:\\arch.iso", drive);
@@ -1203,7 +1242,11 @@ async fn download_and_stage_iso(
         // Write config first
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| InstallerError::Unknown(format!("Failed to serialize config: {}", e)))?;
-        debug_log(&format!("download_and_stage_iso: writing config to {}", config_path)); tokio::fs::write(&config_path, config_json)
+        debug_log(&format!(
+            "download_and_stage_iso: writing config to {}",
+            config_path
+        ));
+        tokio::fs::write(&config_path, config_json)
             .await
             .map_err(|e| {
                 InstallerError::InstallationError(format!("Failed to write config: {}", e))
@@ -1211,11 +1254,17 @@ async fn download_and_stage_iso(
 
         // Download ISO with progress
         let url = iso_url();
-        debug_log(&format!("download_and_stage_iso: starting download from {} to {}", url, iso_path));
+        debug_log(&format!(
+            "download_and_stage_iso: starting download from {} to {}",
+            url, iso_path
+        ));
         let result = match download_file_with_progress(url, &iso_path, &app).await {
             Ok(r) => r,
             Err(e) => {
-                debug_log(&format!("download_and_stage_iso: primary download failed ({}), trying fallback", e));
+                debug_log(&format!(
+                    "download_and_stage_iso: primary download failed ({}), trying fallback",
+                    e
+                ));
                 if url != FALLBACK_ISO_URL {
                     download_file_with_progress(FALLBACK_ISO_URL, &iso_path, &app).await?
                 } else {
@@ -1279,7 +1328,6 @@ async fn install_refind() -> Result<()> {
             return Ok(());
         }
 
-
         let temp_dir = std::env::temp_dir().join("osworld-refind");
         let zip_path = temp_dir.join("refind.zip");
         tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
@@ -1290,9 +1338,14 @@ async fn install_refind() -> Result<()> {
         let bundled = find_bundled_refind_zip();
         if let Some(bundled_path) = bundled {
             debug_log(&format!("Using bundled rEFInd from: {:?}", bundled_path));
-            tokio::fs::copy(&bundled_path, &zip_path).await.map_err(|e| {
-                InstallerError::InstallationError(format!("Failed to copy bundled rEFInd: {}", e))
-            })?;
+            tokio::fs::copy(&bundled_path, &zip_path)
+                .await
+                .map_err(|e| {
+                    InstallerError::InstallationError(format!(
+                        "Failed to copy bundled rEFInd: {}",
+                        e
+                    ))
+                })?;
         } else {
             debug_log("Bundled rEFInd not found, falling back to download");
             let refind_url =
@@ -1479,32 +1532,50 @@ fn set_test_mode(enabled: bool) {
     let _ = enabled;
 }
 
+#[allow(dead_code)]
 fn debug_log(msg: &str) {
     use std::io::Write;
-    let msg = format!("{}: {}\n", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(), msg);
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("C:\\altos-debug.log").and_then(|mut f| f.write_all(msg.as_bytes()));
-
+    let msg = format!(
+        "{}: {}\n",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        msg
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("C:\\altos-debug.log")
+        .and_then(|mut f| f.write_all(msg.as_bytes()));
 }
 
+#[allow(dead_code)]
 fn write_install_state(stage: &str, extra: serde_json::Map<String, serde_json::Value>) {
-    let _ = write_test_state(
-        "C:\\\\altos-test-state.json".to_string(),
-        {
-            let mut obj = serde_json::Map::new();
-            obj.insert("screen".to_string(), serde_json::Value::String("progress".to_string()));
-            obj.insert("stage".to_string(), serde_json::Value::String(stage.to_string()));
-            obj.insert("timestamp".to_string(), serde_json::Value::Number(
-                serde_json::Number::from(std::time::SystemTime::now()
+    let _ = write_test_state("C:\\\\altos-test-state.json".to_string(), {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "screen".to_string(),
+            serde_json::Value::String("progress".to_string()),
+        );
+        obj.insert(
+            "stage".to_string(),
+            serde_json::Value::String(stage.to_string()),
+        );
+        obj.insert(
+            "timestamp".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(
+                std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .as_millis() as u64)
-            ));
-            for (k, v) in extra {
-                obj.insert(k, v);
-            }
-            serde_json::Value::Object(obj).to_string()
-        },
-    );
+                    .as_millis() as u64,
+            )),
+        );
+        for (k, v) in extra {
+            obj.insert(k, v);
+        }
+        serde_json::Value::Object(obj).to_string()
+    });
 }
 
 /// Write test state JSON to disk for automated UI testing (appends to array)
@@ -2040,6 +2111,7 @@ fn get_disk_free_space(drive_letter: &str) -> Option<u64> {
 }
 
 /// Extract drive letter from a selected_disk string like "Disk 1 (D:)"
+#[allow(dead_code)]
 fn extract_drive_letter(selected_disk: &str) -> Option<String> {
     selected_disk
         .split('(')
@@ -2084,10 +2156,7 @@ fn suspend_bitlocker(drive_letter: String) -> Result<String> {
         } else {
             format!("{}:", drive_letter)
         };
-        let output = run_powershell(&format!(
-            "manage-bde -protectors -disable {}",
-            drive
-        ))?;
+        let output = run_powershell(&format!("manage-bde -protectors -disable {}", drive))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !output.status.success() {
@@ -2096,7 +2165,10 @@ fn suspend_bitlocker(drive_letter: String) -> Result<String> {
                 stderr
             )));
         }
-        Ok(format!("BitLocker suspended on {}. Output: {}", drive, stdout))
+        Ok(format!(
+            "BitLocker suspended on {}. Output: {}",
+            drive, stdout
+        ))
     }
     #[cfg(not(windows))]
     {
@@ -2264,7 +2336,10 @@ fn run_diskpart_script(script: &str) -> Result<String> {
     let temp_path = std::env::temp_dir().join(format!(
         "osworld_diskpart_{}_{}.txt",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
     ));
     std::fs::write(&temp_path, script).map_err(|e| {
         InstallerError::SystemCheckFailed(format!("Failed to write diskpart script: {}", e))
@@ -2281,8 +2356,18 @@ fn run_diskpart_script(script: &str) -> Result<String> {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-    let log = format!("DISKPART SCRIPT:\n{}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n\nEXIT: {}\n---\n", script, stdout, stderr, output.status.success());
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("C:\\altos-diskpart.log").and_then(|mut f| std::io::Write::write_all(&mut f, log.as_bytes()));
+    let log = format!(
+        "DISKPART SCRIPT:\n{}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}\n\nEXIT: {}\n---\n",
+        script,
+        stdout,
+        stderr,
+        output.status.success()
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("C:\\altos-diskpart.log")
+        .and_then(|mut f| std::io::Write::write_all(&mut f, log.as_bytes()));
 
     if !output.status.success()
         || stdout
@@ -2422,7 +2507,11 @@ async fn download_file_with_progress(
         .build()
         .map_err(|e| InstallerError::InstallationError(format!("HTTP client error: {}", e)))?;
 
-    debug_log(&format!("download_file_with_progress: sending request to {}", url)); let response = client.get(url).send().await.map_err(|e| {
+    debug_log(&format!(
+        "download_file_with_progress: sending request to {}",
+        url
+    ));
+    let response = client.get(url).send().await.map_err(|e| {
         InstallerError::InstallationError(format!("Download request failed: {}", e))
     })?;
 
@@ -2431,7 +2520,11 @@ async fn download_file_with_progress(
         .await
         .map_err(|e| InstallerError::InstallationError(format!("Failed to create file: {}", e)))?;
 
-    debug_log(&format!("download_file_with_progress: got response, content_length={:?}", response.content_length())); let mut stream = response.bytes_stream();
+    debug_log(&format!(
+        "download_file_with_progress: got response, content_length={:?}",
+        response.content_length()
+    ));
+    let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut last_percent: u8 = 0;
 
@@ -2480,7 +2573,11 @@ async fn download_file_simple(url: &str, path: &std::path::Path) -> Result<()> {
         .build()
         .map_err(|e| InstallerError::InstallationError(format!("HTTP client error: {}", e)))?;
 
-    debug_log(&format!("download_file_with_progress: sending request to {}", url)); let response = client.get(url).send().await.map_err(|e| {
+    debug_log(&format!(
+        "download_file_with_progress: sending request to {}",
+        url
+    ));
+    let response = client.get(url).send().await.map_err(|e| {
         InstallerError::InstallationError(format!("Download request failed: {}", e))
     })?;
 
@@ -2515,13 +2612,17 @@ fn find_bundled_refind_zip() -> Option<std::path::PathBuf> {
     let candidates = [
         // Tauri bundled resources (next to exe)
         std::env::current_exe().ok().and_then(|p| {
-            p.parent().map(|d| d.join("resources").join("refind-bin-0.14.2.zip"))
+            p.parent()
+                .map(|d| d.join("resources").join("refind-bin-0.14.2.zip"))
         }),
         // Development build (repo root)
-        Some(std::path::PathBuf::from("src-tauri/resources/refind-bin-0.14.2.zip")),
+        Some(std::path::PathBuf::from(
+            "src-tauri/resources/refind-bin-0.14.2.zip",
+        )),
         // Relative to exe in target directory
         std::env::current_exe().ok().and_then(|p| {
-            p.parent().map(|d| d.join("..").join("resources").join("refind-bin-0.14.2.zip"))
+            p.parent()
+                .map(|d| d.join("..").join("resources").join("refind-bin-0.14.2.zip"))
         }),
     ];
     for candidate in candidates.iter().flatten() {
@@ -2670,7 +2771,11 @@ async fn write_config(config: InstallConfig, drive: String) -> Result<()> {
         let config_path = format!("{}:\\install-config.json", drive_clean);
         let config_json = serde_json::to_string_pretty(&config)
             .map_err(|e| InstallerError::Unknown(format!("Failed to serialize config: {}", e)))?;
-        debug_log(&format!("download_and_stage_iso: writing config to {}", config_path)); tokio::fs::write(&config_path, config_json)
+        debug_log(&format!(
+            "download_and_stage_iso: writing config to {}",
+            config_path
+        ));
+        tokio::fs::write(&config_path, config_json)
             .await
             .map_err(|e| {
                 InstallerError::InstallationError(format!("Failed to write config: {}", e))
@@ -2756,7 +2861,8 @@ async fn download_iso(drive: String, app: AppHandle) -> Result<DownloadProgress>
                         last_error = Some(e);
                         if attempt < 3 {
                             let backoff_secs = 2u64.pow(attempt - 1);
-                            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs))
+                                .await;
                         }
                     }
                 }
@@ -3059,7 +3165,10 @@ fn remove_altos_partitions(confirmation: String, expand_target_drive: bool) -> R
         // Expand target drive if requested
         if expand_target_drive {
             match run_diskpart_script_with_timeout(
-                &format!("select disk {}\nselect volume {}\nextend\n", disk_index, target_drive),
+                &format!(
+                    "select disk {}\nselect volume {}\nextend\n",
+                    disk_index, target_drive
+                ),
                 60,
             ) {
                 Ok(_) => actions.push(format!("Expanded {}: drive to reclaim space", target_drive)),
@@ -3595,7 +3704,6 @@ fn main() {
             write_test_state,
             set_test_mode,
             suspend_bitlocker,
-
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
