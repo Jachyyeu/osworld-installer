@@ -16,6 +16,7 @@ DEST_PATH="${ALTOS_MONITOR_PATH:-}"
 
 # --- Read config file if present ---
 if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck source=/dev/null
   source "$CONFIG_FILE"
 fi
 

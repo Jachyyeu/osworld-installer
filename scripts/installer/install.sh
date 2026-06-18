@@ -91,24 +91,25 @@ parse_config() {
 
   echo -e "${BLUE}[INFO] Loading installation configuration...${RESET}"
 
+  # Read the whole config once and query it with a single Python invocation
   local config_json
   config_json=$(python3 -c "import json; print(json.dumps(json.load(open('$config_file'))))")
 
-  target_disk=$(python3 -c "import json; print(json.load(open('$config_file')).get('target_disk',''))")
-  mode=$(python3 -c "import json; print(json.load(open('$config_file')).get('mode','wipe'))")
-  hostname=$(python3 -c "import json; print(json.load(open('$config_file')).get('hostname','archlinux'))")
-  username=$(python3 -c "import json; print(json.load(open('$config_file')).get('username','user'))")
-  password=$(python3 -c "import json; print(json.load(open('$config_file')).get('password',''))")
-  timezone=$(python3 -c "import json; print(json.load(open('$config_file')).get('timezone','UTC'))")
-  locale=$(python3 -c "import json; print(json.load(open('$config_file')).get('locale','en_US.UTF-8'))")
-  keymap=$(python3 -c "import json; print(json.load(open('$config_file')).get('keymap','us'))")
+  target_disk=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('target_disk',''))" "$config_json")
+  mode=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('mode','wipe'))" "$config_json")
+  hostname=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('hostname','archlinux'))" "$config_json")
+  username=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('username','user'))" "$config_json")
+  password=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('password',''))" "$config_json")
+  timezone=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('timezone','UTC'))" "$config_json")
+  locale=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('locale','en_US.UTF-8'))" "$config_json")
+  keymap=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('keymap','us'))" "$config_json")
 
   # Edition and per-app customization
-  ALTOS_EDITION=$(python3 -c "import json; print(json.load(open('$config_file')).get('edition','home').lower())")
-  ALTOS_BROWSER=$(python3 -c "import json; print(json.load(open('$config_file')).get('browser','brave'))")
-  ALTOS_EMAIL_CLIENT=$(python3 -c "import json; print(json.load(open('$config_file')).get('email_client','thunderbird'))")
-  ALTOS_MUSIC_PLAYER=$(python3 -c "import json; print(json.load(open('$config_file')).get('music_player','strawberry'))")
-  ALTOS_INCLUDE_OFFICE=$(python3 -c "import json; print(str(json.load(open('$config_file')).get('include_office_suite', True)).lower())")
+  ALTOS_EDITION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('edition','home').lower())" "$config_json")
+  ALTOS_BROWSER=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('browser','brave'))" "$config_json")
+  ALTOS_EMAIL_CLIENT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('email_client','thunderbird'))" "$config_json")
+  ALTOS_MUSIC_PLAYER=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('music_player','strawberry'))" "$config_json")
+  ALTOS_INCLUDE_OFFICE=$(python3 -c "import json,sys; print(str(json.loads(sys.argv[1]).get('include_office_suite', True)).lower())" "$config_json")
 
   export ALTOS_EDITION ALTOS_BROWSER ALTOS_EMAIL_CLIENT ALTOS_MUSIC_PLAYER ALTOS_INCLUDE_OFFICE
 

@@ -178,7 +178,7 @@ PYEOF
     fi
   done <<< "$script_list"
 
-  rm -rf "/mnt${chroot_dir}"
+  rm -rf "/mnt${chroot_dir:?}"
   echo -e "${GREEN}[OK] Post-install scripts complete.${RESET}"
 }
 
