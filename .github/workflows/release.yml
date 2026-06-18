@@ -59,14 +59,18 @@ jobs:
           node-version: 20
 
       - name: Install Rust
+        shell: bash
         run: |
           rustup update stable
           rustup default stable
+          rustup target add x86_64-pc-windows-msvc
 
       - name: Install dependencies
+        shell: bash
         run: npm ci 2>&1 | tee npm-ci.log
 
       - name: Build frontend
+        shell: bash
         run: npm run build 2>&1 | tee build.log
 
       # Optional: code signing. Set these secrets in GitHub to sign the .exe.

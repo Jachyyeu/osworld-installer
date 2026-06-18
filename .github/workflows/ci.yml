@@ -43,11 +43,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
+        shell: bash
         run: |
           rustup update stable
           rustup default stable
+          rustup target add x86_64-pc-windows-msvc
 
       - name: Run tests (Windows, with mocks)
+        shell: bash
         run: cd src-tauri && cargo test --features test-mocks 2>&1 | tee test-windows.log
 
       - name: Upload Windows Rust logs on failure
