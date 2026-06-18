@@ -64,10 +64,10 @@ jobs:
           rustup default stable
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci 2>&1 | tee npm-ci.log
 
       - name: Build frontend
-        run: npm run build
+        run: npm run build 2>&1 | tee build.log
 
       # Optional: code signing. Set these secrets in GitHub to sign the .exe.
       # Common options: Azure Trusted Signing or a standard code signing cert.
@@ -97,3 +97,12 @@ jobs:
             downloads the ISO automatically.
           releaseDraft: true
           prerelease: false
+
+      - name: Upload Windows build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-logs
+          path: |
+            npm-ci.log
+            build.log
