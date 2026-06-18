@@ -1,14 +1,14 @@
 # AltOS Installer — Project Status
 
 **Saved:** 2026-06-16  
-**State:** In progress — all four product phases architected; Windows installer v0.2.3 building, real-hardware test pending.
+**State:** In progress — all four product phases architected; Windows installer v0.2.4 building, real-hardware test pending.
 
 ## What Was Completed This Session
 
 1. **Phase 1 — Unattended boot fix**
    - rEFInd now defaults to `OSWorld Installer` and ignores NVRAM last-boot
    - Windows installer uses `bcdedit /bootsequence` for one-time next boot
-   - Tagged `v0.1.1` and triggered GitHub Actions release build; later fixed CI failures and tagged `v0.2.3`
+   - Tagged `v0.1.1` and triggered GitHub Actions release build; later fixed CI failures and tagged `v0.2.4`
 
 2. **Phase 2 — Edition system**
    - Added `packages/home.yaml`, `gaming.yaml`, `creative.yaml`, `privacy.yaml`
@@ -43,7 +43,7 @@ Real-hardware test on `jachym-pc` is still pending. The PC is currently running 
 
 ## Next Steps
 
-1. Build `v0.2.3` ISO and Windows installer (GitHub Actions after tagging `v0.2.3`).
+1. Build `v0.2.4` ISO and Windows installer (GitHub Actions after tagging `v0.2.4`).
 2. On `jachym-pc`:
    - Reboot to Windows
    - Run the new `AltOS-Installer.exe`
@@ -56,9 +56,9 @@ Real-hardware test on `jachym-pc` is still pending. The PC is currently running 
 ## Quick Commands
 
 ```bash
-# Tag and build v0.2.3 release
-git tag v0.2.3
-git push origin v0.2.3
+# Tag and build v0.2.4 release
+git tag v0.2.4
+git push origin v0.2.4
 
 # Run automated VM test loop
 cd vm-test
