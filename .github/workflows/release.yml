@@ -90,17 +90,11 @@ jobs:
           set -x
           npm run build 2>&1 | tee build.log
 
-      - name: Install Tauri CLI
-        shell: bash
-        run: |
-          set -x
-          cargo install tauri-cli --version ^2.0 2>&1 | tee tauri-cli-install.log
-
       - name: Build Tauri app
         shell: bash
         run: |
           set -x
-          cd src-tauri && cargo tauri build 2>&1 | tee tauri-build.log
+          npx tauri build 2>&1 | tee tauri-build.log
 
       - name: Upload Windows build logs on failure
         if: failure()
@@ -120,7 +114,7 @@ jobs:
           git config --global user.email "github-actions@users.noreply.github.com"
           git checkout -b build-logs/${{ github.run_id }}
           mkdir -p build-logs
-          cp npm-ci.log build.log tauri-cli-install.log src-tauri/tauri-build.log build-logs/ 2>/dev/null || true
+          cp npm-ci.log build.log tauri-build.log build-logs/ 2>/dev/null || true
           git add build-logs/
           git commit -m "Windows build logs for run ${{ github.run_id }}" || echo "Nothing to commit"
           git push origin build-logs/${{ github.run_id }}
