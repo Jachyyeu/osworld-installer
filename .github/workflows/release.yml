@@ -70,31 +70,34 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Rust
-        shell: bash
+      - name: Debug environment
+        shell: pwsh
         run: |
-          set -x
-          rustup show active-toolchain || rustup toolchain install stable
+          Get-Command npm
+          npm --version
+          Get-Command cargo
+          cargo --version
+          Get-Command rustup
+          rustup --version
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup show active-toolchain
           rustup default stable
           rustc --version
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          set -x
-          npm ci 2>&1 | tee npm-ci.log
+        shell: pwsh
+        run: npm ci | Tee-Object npm-ci.log
 
       - name: Build frontend
-        shell: bash
-        run: |
-          set -x
-          npm run build 2>&1 | tee build.log
+        shell: pwsh
+        run: npm run build | Tee-Object build.log
 
       - name: Build Tauri app
-        shell: bash
-        run: |
-          set -x
-          npx tauri build 2>&1 | tee tauri-build.log
+        shell: pwsh
+        run: npx tauri build | Tee-Object tauri-build.log
 
       - name: Upload Windows build logs on failure
         if: failure()
@@ -104,19 +107,19 @@ jobs:
           path: |
             npm-ci.log
             build.log
-            src-tauri/tauri-build.log
+            tauri-build.log
 
       - name: Commit Windows build logs on failure
         if: failure()
-        shell: bash
+        shell: pwsh
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@users.noreply.github.com"
           git checkout -b build-logs/${{ github.run_id }}
-          mkdir -p build-logs
-          cp npm-ci.log build.log tauri-build.log build-logs/ 2>/dev/null || true
+          New-Item -ItemType Directory -Force -Path build-logs
+          Copy-Item npm-ci.log build.log tauri-build.log build-logs/ -ErrorAction SilentlyContinue
           git add build-logs/
-          git commit -m "Windows build logs for run ${{ github.run_id }}" || echo "Nothing to commit"
+          git commit -m "Windows build logs for run ${{ github.run_id }}" -ErrorAction SilentlyContinue
           git push origin build-logs/${{ github.run_id }}
 
       - name: Attach installer to release
