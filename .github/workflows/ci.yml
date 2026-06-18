@@ -47,8 +47,15 @@ jobs:
           rustup update stable
           rustup default stable
 
-      - name: Run tests (Windows)
-        run: cd src-tauri && cargo test
+      - name: Run tests (Windows, with mocks)
+        run: cd src-tauri && cargo test --features test-mocks 2>&1 | tee test-windows.log
+
+      - name: Upload Windows Rust logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-windows-logs
+          path: src-tauri/*.log
 
   frontend:
     runs-on: ubuntu-latest
