@@ -40,9 +40,9 @@ jobs:
           git config --global user.email "github-actions@users.noreply.github.com"
           git checkout -b build-logs/${{ github.run_id }}
           mkdir -p build-logs
-          cp mkarchiso.log build-logs/
+          cp mkarchiso.log build-logs/ 2>/dev/null || true
           git add build-logs/
-          git commit -m "ISO build logs for run ${{ github.run_id }}"
+          git commit -m "ISO build logs for run ${{ github.run_id }}" || echo "Nothing to commit"
           git push origin build-logs/${{ github.run_id }}
 
       - name: Upload ISO artifact
@@ -73,25 +73,34 @@ jobs:
       - name: Install Rust
         shell: bash
         run: |
-          rustup update stable
+          set -x
+          rustup show active-toolchain || rustup toolchain install stable
           rustup default stable
-          rustup target add x86_64-pc-windows-msvc
+          rustc --version
 
       - name: Install dependencies
         shell: bash
-        run: npm ci 2>&1 | tee npm-ci.log
+        run: |
+          set -x
+          npm ci 2>&1 | tee npm-ci.log
 
       - name: Build frontend
         shell: bash
-        run: npm run build 2>&1 | tee build.log
+        run: |
+          set -x
+          npm run build 2>&1 | tee build.log
 
       - name: Install Tauri CLI
         shell: bash
-        run: cargo install tauri-cli --version ^2.0
+        run: |
+          set -x
+          cargo install tauri-cli --version ^2.0 2>&1 | tee tauri-cli-install.log
 
       - name: Build Tauri app
         shell: bash
-        run: cd src-tauri && cargo tauri build 2>&1 | tee tauri-build.log
+        run: |
+          set -x
+          cd src-tauri && cargo tauri build 2>&1 | tee tauri-build.log
 
       - name: Upload Windows build logs on failure
         if: failure()
@@ -111,9 +120,9 @@ jobs:
           git config --global user.email "github-actions@users.noreply.github.com"
           git checkout -b build-logs/${{ github.run_id }}
           mkdir -p build-logs
-          cp npm-ci.log build.log src-tauri/tauri-build.log build-logs/ 2>/dev/null || true
+          cp npm-ci.log build.log tauri-cli-install.log src-tauri/tauri-build.log build-logs/ 2>/dev/null || true
           git add build-logs/
-          git commit -m "Windows build logs for run ${{ github.run_id }}"
+          git commit -m "Windows build logs for run ${{ github.run_id }}" || echo "Nothing to commit"
           git push origin build-logs/${{ github.run_id }}
 
       - name: Attach installer to release

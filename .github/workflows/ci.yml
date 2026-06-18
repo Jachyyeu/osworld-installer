@@ -45,9 +45,9 @@ jobs:
       - name: Install Rust
         shell: bash
         run: |
-          rustup update stable
+          rustup show active-toolchain || rustup toolchain install stable
           rustup default stable
-          rustup target add x86_64-pc-windows-msvc
+          rustc --version
 
       - name: Run tests (Windows, with mocks)
         shell: bash
