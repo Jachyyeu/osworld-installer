@@ -111,15 +111,15 @@ jobs:
 
       - name: Commit Windows build logs on failure
         if: failure()
-        shell: pwsh
+        shell: bash
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@users.noreply.github.com"
           git checkout -b build-logs/${{ github.run_id }}
-          New-Item -ItemType Directory -Force -Path build-logs
-          Copy-Item npm-ci.log build.log tauri-build.log build-logs/ -ErrorAction SilentlyContinue
+          mkdir -p build-logs
+          cp npm-ci.log build.log tauri-build.log build-logs/ 2>/dev/null || true
           git add build-logs/
-          git commit -m "Windows build logs for run ${{ github.run_id }}" -ErrorAction SilentlyContinue
+          git commit -m "Windows build logs for run ${{ github.run_id }}" || true
           git push origin build-logs/${{ github.run_id }}
 
       - name: Attach installer to release
