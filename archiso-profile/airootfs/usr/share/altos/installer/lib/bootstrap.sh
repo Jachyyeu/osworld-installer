@@ -149,6 +149,6 @@ EOF
   else
     run touch /mnt/.autorelabel
   fi
-}
+
   echo -e "${GREEN}[OK] Base system installed.${RESET}"
 }

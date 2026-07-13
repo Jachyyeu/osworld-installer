@@ -189,10 +189,7 @@ main() {
     fi
   fi
 
-  # Step 6 — Format & mount
-  format_and_mount_partitions
-
-  # Step 7 — Bootstrap base system
+  # Step 6 — Format, mount, and bootstrap base system
   bootstrap_system
 
   # Step 8 — Install hardware drivers
