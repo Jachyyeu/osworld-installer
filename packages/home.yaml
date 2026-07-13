@@ -10,14 +10,14 @@ base_packages:
   # KDE Plasma desktop
   - plasma-desktop
   - sddm
-  - konsole
+  - konsole5
   - dolphin
   - kate
   - gwenview
 
   # Essential apps
   - firefox
-  - libreoffice-fresh
+  - libreoffice
   - vlc
   - okular
 
@@ -28,10 +28,10 @@ base_packages:
 
   # Audio/Bluetooth/Network
   - pipewire
-  - pipewire-pulse
+  - pipewire-pulseaudio
   - bluez
   - bluedevil
-  - networkmanager
+  - NetworkManager
   - network-manager-applet
 
   # CLI tools
@@ -39,8 +39,8 @@ base_packages:
   - htop
   - nano
   - flatpak
-  - python-pyqt6
-  - python-yaml
+  - python3-qt6
+  - python3-pyyaml
   - curl
 
   # KDE configuration tools (provides kwriteconfig5/6)
@@ -50,8 +50,8 @@ base_packages:
   - openssh
 
   # Fonts
-  - ttf-dejavu
-  - noto-fonts
+  - dejavu-sans-mono-fonts
+  - google-noto-sans-fonts
 
 post_install_scripts:
   - name: "Apply Windows 11 KDE theme"
@@ -157,7 +157,7 @@ post_install_scripts:
         echo "Tailscale already installed."
       else
         echo "Installing Tailscale..."
-        curl -fsSL https://tailscale.com/install.sh | sh
+        dnf install --assumeyes tailscale
       fi
       systemctl enable tailscaled.service
       echo "Tailscale installed. Run 'tailscale login' after first boot to join your Tailnet."

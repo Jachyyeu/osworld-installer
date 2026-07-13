@@ -26,15 +26,15 @@ apps:
     name: Brave
     description: Privacy-focused web browser with built-in ad blocking.
     category: browsers
-    install_method: pacman
-    package: brave
+    install_method: flatpak
+    package: com.brave.Browser
     free: true
 
   - id: chromium
     name: Chromium
     description: Open-source browser project that powers Chrome.
     category: browsers
-    install_method: pacman
+    install_method: dnf
     package: chromium
     free: true
 
@@ -42,7 +42,7 @@ apps:
     name: Firefox
     description: Fast, privacy-focused browser from Mozilla.
     category: browsers
-    install_method: pacman
+    install_method: dnf
     package: firefox
     free: true
 
@@ -50,7 +50,7 @@ apps:
     name: Thunderbird
     description: Free email client from Mozilla.
     category: communication
-    install_method: pacman
+    install_method: dnf
     package: thunderbird
     free: true
 
@@ -82,7 +82,7 @@ apps:
     name: Strawberry Music Player
     description: Music player and collection organizer.
     category: media
-    install_method: pacman
+    install_method: dnf
     package: strawberry
     free: true
 
@@ -90,7 +90,7 @@ apps:
     name: VLC
     description: Versatile media player.
     category: media
-    install_method: pacman
+    install_method: dnf
     package: vlc
     free: true
 
@@ -98,7 +98,7 @@ apps:
     name: OBS Studio
     description: Free software for video recording and live streaming.
     category: creative
-    install_method: pacman
+    install_method: dnf
     package: obs-studio
     free: true
 
@@ -106,7 +106,7 @@ apps:
     name: Blender
     description: Open-source 3D creation suite.
     category: creative
-    install_method: pacman
+    install_method: dnf
     package: blender
     free: true
 
@@ -114,7 +114,7 @@ apps:
     name: Krita
     description: Professional digital painting application.
     category: creative
-    install_method: pacman
+    install_method: dnf
     package: krita
     free: true
 
@@ -122,7 +122,7 @@ apps:
     name: Steam
     description: Valve's gaming platform.
     category: gaming
-    install_method: pacman
+    install_method: dnf
     package: steam
     free: true
 
@@ -130,7 +130,7 @@ apps:
     name: Lutris
     description: Open gaming platform for Linux.
     category: gaming
-    install_method: pacman
+    install_method: dnf
     package: lutris
     free: true
 
@@ -138,23 +138,23 @@ apps:
     name: Visual Studio Code
     description: Popular code editor from Microsoft.
     category: development
-    install_method: pacman
-    package: code
+    install_method: flatpak
+    package: com.visualstudio.code
     free: true
 
   - id: docker
     name: Docker
     description: Container platform for developers.
     category: development
-    install_method: pacman
-    package: docker
+    install_method: dnf
+    package: moby-engine
     free: true
 
   - id: keepassxc
     name: KeePassXC
     description: Cross-platform password manager.
     category: privacy
-    install_method: pacman
+    install_method: dnf
     package: keepassxc
     free: true
 
