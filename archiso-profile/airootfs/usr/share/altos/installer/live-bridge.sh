@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# live-bridge.sh — Arch Live ISO bridge script
+# live-bridge.sh — Fedora KDE Spin Live ISO bridge script
 # Automatically mounts the OSWORLDBOOT partition, copies the
 # staged install-config.json, and hands off to install.sh.
 # Usage:
@@ -26,6 +26,13 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 echo -e "${BLUE}[INFO] OSWorld Live Bridge starting...${RESET}"
+
+# --- Fedora live environment detection ----------------------
+if [[ ! -f /etc/fedora-release ]]; then
+  echo -e "${RED}[FAIL] This installer must run inside the Fedora live environment.${RESET}"
+  exit 1
+fi
+echo -e "${GREEN}[OK] Fedora live environment detected.${RESET}"
 
 # --- Find OSWORLDBOOT partition -----------------------------
 echo -e "${BLUE}[INFO] Searching for partition labeled OSWORLDBOOT...${RESET}"
@@ -97,17 +104,22 @@ config['timezone'] = config.get('timezone', 'Europe/Prague')
 config['locale'] = config.get('locale', 'en_US.UTF-8')
 config['keymap'] = config.get('keymap', 'us')
 
-# Map Rust field names to Bash installer field names
+# Map Rust field names to Bash installer field names.
+# Fail closed: only recognised install_type values are allowed.  Anything else
+# aborts so the installer can never silently default to wipe mode.
 install_type = config.get('install_type', '')
 if isinstance(install_type, str):
-    if install_type.lower() == 'dualboot':
+    itype = install_type.lower()
+    if itype == 'dualboot':
         config['mode'] = 'dualboot'
-    elif install_type.lower() == 'replacewindows':
+    elif itype == 'replace':
         config['mode'] = 'wipe'
     else:
-        config['mode'] = config.get('mode', 'wipe')
+        print(f"[FAIL] install_type must be 'dualboot' or 'replace'; got '{install_type}'. Aborting to avoid accidental disk wipe.")
+        sys.exit(1)
 else:
-    config['mode'] = config.get('mode', 'wipe')
+    print("[FAIL] install_type missing or not a string. Aborting to avoid accidental disk wipe.")
+    sys.exit(1)
 
 if 'computer_name' in config and 'hostname' not in config:
     config['hostname'] = config['computer_name']
