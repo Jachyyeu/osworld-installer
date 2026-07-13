@@ -19,6 +19,9 @@ if [[ ! -f "$PACKAGES_YAML" ]]; then
   PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
 fi
 
+# Mount point of the target system; install.sh may override this.
+: "${ALTOS_MOUNT:=/mnt}"
+
 configure_system() {
   local hostname="$1"
   local username="$2"
@@ -32,43 +35,38 @@ configure_system() {
 
   # Timezone
   echo -e "${BLUE}[INFO] Setting timezone to ${timezone}...${RESET}"
-  run ln -sf "/usr/share/zoneinfo/${timezone}" /mnt/etc/localtime
-  run arch-chroot /mnt hwclock --systohc
+  run chroot "${ALTOS_MOUNT}" ln -sf "/usr/share/zoneinfo/${timezone}" /etc/localtime
+  run chroot "${ALTOS_MOUNT}" hwclock --systohc
 
   # Locale
   echo -e "${BLUE}[INFO] Configuring locale: ${locale}...${RESET}"
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would uncomment ${locale} in /mnt/etc/locale.gen${RESET}"
-    echo -e "${BLUE}[DRY] Would run: locale-gen${RESET}"
-    echo -e "${BLUE}[DRY] Would create /mnt/etc/locale.conf with LANG=${locale}${RESET}"
+    echo -e "${BLUE}[DRY] Would install glibc-langpack-${locale%%.*}${RESET}"
+    echo -e "${BLUE}[DRY] Would run: localectl set-locale LANG=${locale}${RESET}"
   else
-    if grep -q "^#${locale}" /mnt/etc/locale.gen; then
-      run sed -i "s/^#${locale}/${locale}/" /mnt/etc/locale.gen
-      echo -e "${GREEN}[OK] Uncommented ${locale} in locale.gen.${RESET}"
-    fi
-    run arch-chroot /mnt locale-gen
-    echo "LANG=${locale}" > /mnt/etc/locale.conf
+    run chroot "${ALTOS_MOUNT}" dnf install --assumeyes "glibc-langpack-${locale%%.*}"
+    run chroot "${ALTOS_MOUNT}" localectl set-locale "LANG=${locale}"
     echo -e "${GREEN}[OK] Locale configured.${RESET}"
   fi
 
   # Console keymap
   echo -e "${BLUE}[INFO] Setting console keymap to ${keymap}...${RESET}"
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would write KEYMAP=${keymap} to /mnt/etc/vconsole.conf${RESET}"
+    echo -e "${BLUE}[DRY] Would write KEYMAP=${keymap} to ${ALTOS_MOUNT}/etc/vconsole.conf${RESET}"
   else
-    echo "KEYMAP=${keymap}" > /mnt/etc/vconsole.conf
+    echo "KEYMAP=${keymap}" > "${ALTOS_MOUNT}/etc/vconsole.conf"
     echo -e "${GREEN}[OK] Keymap configured.${RESET}"
   fi
 
   # Hostname
   echo -e "${BLUE}[INFO] Setting hostname to ${hostname}...${RESET}"
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would write ${hostname} to /mnt/etc/hostname${RESET}"
-    echo -e "${BLUE}[DRY] Would write hosts entries to /mnt/etc/hosts${RESET}"
+    echo -e "${BLUE}[DRY] Would write ${hostname} to ${ALTOS_MOUNT}/etc/hostname${RESET}"
+    echo -e "${BLUE}[DRY] Would write hosts entries to ${ALTOS_MOUNT}/etc/hosts${RESET}"
   else
-    echo "$hostname" > /mnt/etc/hostname
+    echo "$hostname" > "${ALTOS_MOUNT}/etc/hostname"
 
-    cat > /mnt/etc/hosts <<EOF
+    cat > "${ALTOS_MOUNT}/etc/hosts" <<EOF
 127.0.0.1   localhost
 127.0.1.1   ${hostname}
 ::1         localhost
@@ -78,28 +76,30 @@ EOF
 
   # User creation
   echo -e "${BLUE}[INFO] Creating user account: ${username}...${RESET}"
-  run arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$username"
+  run chroot "${ALTOS_MOUNT}" useradd -m -G wheel -s /bin/bash "$username"
 
   echo -e "${BLUE}[INFO] Setting password for ${username}...${RESET}"
   if [[ "$DRY_RUN" == true ]]; then
     echo -e "${BLUE}[DRY] Would set password for user ${username}${RESET}"
   else
-    run arch-chroot /mnt chpasswd <<< "${username}:${password}"
+    echo "${username}:${password}" | run chroot "${ALTOS_MOUNT}" chpasswd
     echo -e "${GREEN}[OK] Password set.${RESET}"
   fi
 
   # Sudo
   echo -e "${BLUE}[INFO] Enabling sudo for the 'wheel' group...${RESET}"
   if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would uncomment '%wheel ALL=(ALL:ALL) ALL' in /mnt/etc/sudoers${RESET}"
+    echo -e "${BLUE}[DRY] Would uncomment '%wheel ALL=(ALL:ALL) ALL' in ${ALTOS_MOUNT}/etc/sudoers${RESET}"
   else
-    run sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+    run sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' "${ALTOS_MOUNT}/etc/sudoers"
     echo -e "${GREEN}[OK] Sudo enabled for wheel group.${RESET}"
   fi
 
-  # NetworkManager
-  echo -e "${BLUE}[INFO] Enabling NetworkManager to start on boot...${RESET}"
-  run arch-chroot /mnt systemctl enable NetworkManager.service
+  # Services
+  echo -e "${BLUE}[INFO] Enabling essential services to start on boot...${RESET}"
+  for svc in sddm NetworkManager bluetooth sshd; do
+    run chroot "${ALTOS_MOUNT}" systemctl enable "${svc}.service"
+  done
 
   echo -e "${GREEN}[OK] System configuration complete.${RESET}"
 }
@@ -122,7 +122,7 @@ run_post_install_scripts() {
   fi
 
   local chroot_dir="/var/lib/altos-install"
-  mkdir -p "/mnt${chroot_dir}"
+  mkdir -p "${ALTOS_MOUNT}${chroot_dir}"
 
   # Use Python to parse YAML, write scripts to temp files, and return their paths
   local script_list
@@ -147,13 +147,13 @@ for i, script in enumerate(scripts, 1):
     if not run_block:
         continue
     path = f"${chroot_dir}/post-{i:03d}.sh"
-    with open(f"/mnt{path}", "w") as f:
+    with open(f"${ALTOS_MOUNT}{path}", "w") as f:
         f.write("#!/bin/bash\nset -e\n")
         f.write(f"export ALTOS_USERNAME='${username}'\n")
         f.write(f"# {name}\n")
         f.write(run_block)
         f.write("\n")
-    os.chmod(f"/mnt{path}", 0o755)
+    os.chmod(f"${ALTOS_MOUNT}{path}", 0o755)
     print(path)
 PYEOF
 )
@@ -171,14 +171,14 @@ PYEOF
     [[ -z "$script_path" ]] && continue
     current=$((current + 1))
     echo -e "${BLUE}[INFO] Running post-install script ${current}/${total_count}${RESET}"
-    if arch-chroot /mnt bash "$script_path"; then
+    if chroot "${ALTOS_MOUNT}" bash "$script_path"; then
       echo -e "${GREEN}[OK] Script ${current}/${total_count} completed.${RESET}"
     else
       echo -e "${YELLOW}[WARN] Script ${current}/${total_count} exited with an error (non-fatal).${RESET}"
     fi
   done <<< "$script_list"
 
-  rm -rf "/mnt${chroot_dir:?}"
+  rm -rf "${ALTOS_MOUNT}${chroot_dir:?}"
   echo -e "${GREEN}[OK] Post-install scripts complete.${RESET}"
 }
 
@@ -208,7 +208,7 @@ enable_services_from_yaml() {
   while IFS= read -r svc; do
     [[ -z "$svc" ]] && continue
     echo -e "${BLUE}[INFO] Enabling service: ${svc}${RESET}"
-    arch-chroot /mnt systemctl enable "${svc}.service" 2>/dev/null || {
+    chroot "${ALTOS_MOUNT}" systemctl enable "${svc}.service" 2>/dev/null || {
       echo -e "${YELLOW}[WARN] Failed to enable ${svc}.service (may not be installed yet).${RESET}"
     }
   done <<< "$services"
