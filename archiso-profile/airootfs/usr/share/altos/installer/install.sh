@@ -146,6 +146,9 @@ main() {
   # Start logging
   log_start
 
+  # Ensure bind mounts are always cleaned up, even on failure.
+  trap 'unmount_bind_mounts' EXIT
+
   # Step 1 — Environment verification
   verify_environment
 
@@ -225,6 +228,9 @@ main() {
 
   # Step 14 — Finalize
   finalize_installation
+
+  # Explicitly clean up bind mounts before declaring success.
+  unmount_bind_mounts
 
   echo ""
   if [[ "$DRY_RUN" == true ]]; then

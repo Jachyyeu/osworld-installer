@@ -13,7 +13,28 @@ source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
 # this script mounted.
 _BIND_MOUNTS_ESTABLISHED=false
 
-_cleanup_bind_mounts() {
+mount_bind_mounts() {
+  # Bind mount host filesystems into installroot.  Must remain mounted for
+  # every chroot/dnf/dracut/grub2-mkconfig operation.
+  run mkdir -p /mnt/{proc,sys,dev,etc}
+
+  echo ""
+  echo -e "${BLUE}[INFO] Bind mounting /proc, /sys, /dev, /etc/resolv.conf...${RESET}"
+
+  for d in proc sys dev; do
+    if ! mountpoint -q "/mnt/$d" 2>/dev/null; then
+      run mount --bind "/$d" "/mnt/$d"
+    fi
+  done
+
+  if ! mountpoint -q /mnt/etc/resolv.conf 2>/dev/null; then
+    run mount --bind /etc/resolv.conf /mnt/etc/resolv.conf
+  fi
+
+  _BIND_MOUNTS_ESTABLISHED=true
+}
+
+unmount_bind_mounts() {
   if [[ "$_BIND_MOUNTS_ESTABLISHED" != true ]]; then
     return 0
   fi
@@ -25,6 +46,10 @@ _cleanup_bind_mounts() {
   done
   _BIND_MOUNTS_ESTABLISHED=false
   echo -e "${GREEN}[OK] Bind mounts unmounted.${RESET}"
+}
+
+_cleanup_bind_mounts() {
+  unmount_bind_mounts
 }
 
 bootstrap_system() {
@@ -59,7 +84,7 @@ bootstrap_system() {
     echo -e "${YELLOW}[WARN] /mnt already mounted; skipping root remount.${RESET}"
   fi
 
-  run mkdir -p /mnt/boot/efi /mnt/home /mnt/{proc,sys,dev,etc}
+  run mkdir -p /mnt/boot/efi /mnt/home
 
   if ! mountpoint -q /mnt/boot/efi 2>/dev/null; then
     run mount "${EFI_PART}" /mnt/boot/efi
@@ -68,84 +93,62 @@ bootstrap_system() {
     run mount "${HOME_PART}" /mnt/home
   fi
 
-  # --- Bind mount host filesystems into installroot -----------
+  mount_bind_mounts
+
+  # --- Install Fedora base system ---------------------------
   echo ""
-  echo -e "${BLUE}[INFO] Bind mounting /proc, /sys, /dev, /etc/resolv.conf...${RESET}"
+  echo -e "${BLUE}[INFO] Installing Fedora base system with dnf...${RESET}"
 
-  for d in proc sys dev; do
-    if ! mountpoint -q "/mnt/$d" 2>/dev/null; then
-      run mount --bind "/$d" "/mnt/$d"
-    fi
-  done
-
-  if ! mountpoint -q /mnt/etc/resolv.conf 2>/dev/null; then
-    run mount --bind /etc/resolv.conf /mnt/etc/resolv.conf
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would run: dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \\
+        --disablerepo='*' --enablerepo=fedora --enablerepo=updates install \\
+        @core @base-x @kde-desktop-environment kernel kernel-core kernel-modules linux-firmware \\
+        grub2-efi-x64 shim-x64 grub2-tools-extra os-prober dnf NetworkManager \\
+        pipewire pipewire-pulseaudio wireplumber sddm plasma-desktop \\
+        btrfs-progs dosfstools ntfs-3g sbsigntools mokutil efibootmgr${RESET}"
+  else
+    run dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \
+        --disablerepo='*' --enablerepo=fedora --enablerepo=updates \
+        install @core @base-x @kde-desktop-environment \
+            kernel kernel-core kernel-modules linux-firmware \
+            grub2-efi-x64 shim-x64 grub2-tools-extra \
+            os-prober dnf NetworkManager \
+            pipewire pipewire-pulseaudio wireplumber \
+            sddm plasma-desktop \
+            btrfs-progs dosfstools ntfs-3g \
+            sbsigntools mokutil efibootmgr
   fi
 
-  _BIND_MOUNTS_ESTABLISHED=true
+  # --- Generate /etc/fstab ----------------------------------
+  echo ""
+  echo -e "${BLUE}[INFO] Generating /etc/fstab...${RESET}"
 
-  # Run the install/configuration phase in a subshell with an EXIT trap so
-  # bind mounts are unmounted cleanly even if dnf or fstab generation fails.
-  (
-    trap '_cleanup_bind_mounts' EXIT
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would write /mnt/etc/fstab with UUIDs.${RESET}"
+  else
+    local root_uuid home_uuid efi_uuid
+    root_uuid=$(blkid -s UUID -o value "${ROOT_PART}")
+    home_uuid=$(blkid -s UUID -o value "${HOME_PART}")
+    efi_uuid=$(blkid -s UUID -o value "${EFI_PART}")
 
-    # --- Install Fedora base system ---------------------------
-    echo ""
-    echo -e "${BLUE}[INFO] Installing Fedora base system with dnf...${RESET}"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-      echo -e "${BLUE}[DRY] Would run: dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \\
-          --disablerepo='*' --enablerepo=fedora --enablerepo=updates install \\
-          @core @base-x @kde-desktop-environment kernel kernel-core kernel-modules linux-firmware \\
-          grub2-efi-x64 shim-x64 grub2-tools-extra os-prober dnf NetworkManager \\
-          pipewire pipewire-pulseaudio wireplumber sddm plasma-desktop \\
-          btrfs-progs dosfstools ntfs-3g sbsigntools mokutil efibootmgr${RESET}"
-    else
-      run dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \
-          --disablerepo='*' --enablerepo=fedora --enablerepo=updates \
-          install @core @base-x @kde-desktop-environment \
-              kernel kernel-core kernel-modules linux-firmware \
-              grub2-efi-x64 shim-x64 grub2-tools-extra \
-              os-prober dnf NetworkManager \
-              pipewire pipewire-pulseaudio wireplumber \
-              sddm plasma-desktop \
-              btrfs-progs dosfstools ntfs-3g \
-              sbsigntools mokutil efibootmgr
-    fi
-
-    # --- Generate /etc/fstab ----------------------------------
-    echo ""
-    echo -e "${BLUE}[INFO] Generating /etc/fstab...${RESET}"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-      echo -e "${BLUE}[DRY] Would write /mnt/etc/fstab with UUIDs.${RESET}"
-    else
-      local root_uuid home_uuid efi_uuid
-      root_uuid=$(blkid -s UUID -o value "${ROOT_PART}")
-      home_uuid=$(blkid -s UUID -o value "${HOME_PART}")
-      efi_uuid=$(blkid -s UUID -o value "${EFI_PART}")
-
-      cat > /mnt/etc/fstab <<EOF
+    cat > /mnt/etc/fstab <<EOF
 UUID=${root_uuid} /     btrfs defaults,noatime 0 0
 UUID=${home_uuid} /home btrfs defaults,noatime 0 0
 UUID=${efi_uuid}  /boot/efi vfat defaults,noatime,umask=0077 0 2
 EOF
 
-      echo -e "${GREEN}[OK] /etc/fstab written.${RESET}"
-    fi
+    echo -e "${GREEN}[OK] /etc/fstab written.${RESET}"
+  fi
 
-    # --- Trigger SELinux relabel on first boot ----------------
-    echo ""
-    echo -e "${BLUE}[INFO] Scheduling SELinux autorelabel on first boot...${RESET}"
+  # --- Trigger SELinux relabel on first boot ----------------
+  echo ""
+  echo -e "${BLUE}[INFO] Scheduling SELinux autorelabel on first boot...${RESET}"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-      echo -e "${BLUE}[DRY] Would touch /mnt/.autorelabel.${RESET}"
-    else
-      run touch /mnt/.autorelabel
-    fi
-  )
-
-  _BIND_MOUNTS_ESTABLISHED=false
-
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would touch /mnt/.autorelabel.${RESET}"
+  else
+    run touch /mnt/.autorelabel
+  fi
+}
   echo -e "${GREEN}[OK] Base system installed.${RESET}"
 }
