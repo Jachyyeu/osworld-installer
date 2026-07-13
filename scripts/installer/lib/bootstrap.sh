@@ -96,14 +96,14 @@ bootstrap_system() {
     if [[ "${DRY_RUN}" == true ]]; then
       echo -e "${BLUE}[DRY] Would run: dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \\
           --disablerepo='*' --enablerepo=fedora --enablerepo=updates install \\
-          @core @base-x @kde-desktop kernel kernel-core kernel-modules linux-firmware \\
+          @core @base-x @kde-desktop-environment kernel kernel-core kernel-modules linux-firmware \\
           grub2-efi-x64 shim-x64 grub2-tools-extra os-prober dnf NetworkManager \\
           pipewire pipewire-pulseaudio wireplumber sddm plasma-desktop \\
           btrfs-progs dosfstools ntfs-3g sbsigntools mokutil efibootmgr${RESET}"
     else
       run dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \
           --disablerepo='*' --enablerepo=fedora --enablerepo=updates \
-          install @core @base-x @kde-desktop \
+          install @core @base-x @kde-desktop-environment \
               kernel kernel-core kernel-modules linux-firmware \
               grub2-efi-x64 shim-x64 grub2-tools-extra \
               os-prober dnf NetworkManager \
