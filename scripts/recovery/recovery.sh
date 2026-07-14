@@ -108,8 +108,16 @@ case "$choice" in
     if [[ -n "$ALTOS_ROOT" ]]; then
       umount "$MOUNT_POINT" 2>/dev/null || true
       mount "$ALTOS_ROOT" "$MOUNT_POINT" 2>/dev/null || true
-      arch-chroot "$MOUNT_POINT" pacman -S --noconfirm nvidia-dkms nvidia-utils || true
-      arch-chroot "$MOUNT_POINT" mkinitcpio -P || true
+      mount --bind /dev "$MOUNT_POINT/dev"
+      mount --bind /proc "$MOUNT_POINT/proc"
+      mount --bind /sys "$MOUNT_POINT/sys"
+      mount --bind /etc/resolv.conf "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
+      chroot "$MOUNT_POINT" dnf reinstall --assumeyes akmod-nvidia xorg-x11-drv-nvidia-cuda || true
+      chroot "$MOUNT_POINT" dracut -f || true
+      umount "$MOUNT_POINT/dev" 2>/dev/null || true
+      umount "$MOUNT_POINT/proc" 2>/dev/null || true
+      umount "$MOUNT_POINT/sys" 2>/dev/null || true
+      umount "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
       umount "$MOUNT_POINT" || true
       echo -e "${GREEN}[OK] NVIDIA drivers reinstalled. Reboot to test.${RESET}"
     else

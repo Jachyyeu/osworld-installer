@@ -45,10 +45,11 @@ echo -e "${BLUE}[INFO] Preparing chroot environment...${RESET}"
 mount --bind /dev "$MOUNT_POINT/dev"
 mount --bind /proc "$MOUNT_POINT/proc"
 mount --bind /sys "$MOUNT_POINT/sys"
+mount --bind /etc/resolv.conf "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
 
 # Reinstall GRUB
 echo -e "${BLUE}[INFO] Reinstalling GRUB...${RESET}"
-arch-chroot "$MOUNT_POINT" grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck || true
+chroot "$MOUNT_POINT" grub2-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=fedora --recheck || true
 
 # Enable os-prober
 echo -e "${BLUE}[INFO] Enabling os-prober...${RESET}"
@@ -60,17 +61,18 @@ fi
 
 # Regenerate config
 echo -e "${BLUE}[INFO] Regenerating GRUB config...${RESET}"
-arch-chroot "$MOUNT_POINT" grub-mkconfig -o /boot/grub/grub.cfg || true
+chroot "$MOUNT_POINT" grub2-mkconfig -o /boot/grub2/grub.cfg || true
 
 # Update EFI boot entries
 echo -e "${BLUE}[INFO] Updating EFI boot entries...${RESET}"
-arch-chroot "$MOUNT_POINT" efibootmgr --create --disk /dev/sda --part 1 --loader /EFI/GRUB/grubx64.efi --label "AltOS" || true
+chroot "$MOUNT_POINT" efibootmgr --create --disk /dev/sda --part 1 --loader /EFI/fedora/shimx64.efi --label "AltOS" || true
 
 # Unmount
 echo -e "${BLUE}[INFO] Cleaning up...${RESET}"
 umount "$MOUNT_POINT/dev" 2>/dev/null || true
 umount "$MOUNT_POINT/proc" 2>/dev/null || true
 umount "$MOUNT_POINT/sys" 2>/dev/null || true
+umount "$MOUNT_POINT/etc/resolv.conf" 2>/dev/null || true
 umount "$MOUNT_POINT/boot/efi" 2>/dev/null || true
 umount "$MOUNT_POINT" 2>/dev/null || true
 

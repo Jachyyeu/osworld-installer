@@ -12,19 +12,17 @@ permissions:
 jobs:
   build-iso:
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install archiso
-        run: |
-          pacman -Sy --noconfirm archiso
+      - name: Create output directory
+        run: mkdir -p ./out
 
-      - name: Build AltOS ISO
+      - name: Download Fedora KDE Spin ISO
         run: |
-          mkarchiso -v -w /tmp/archiso-tmp -o ./out archiso-profile/
+          curl -L -o ./out/Fedora-KDE-Desktop-Live-42-1.1.x86_64.iso \
+            https://download.fedoraproject.org/pub/fedora/linux/releases/42/KDE/x86_64/iso/Fedora-KDE-Desktop-Live-42-1.1.x86_64.iso
+          echo "cf4beecc21ffae86d0e368797cbcc02ba7f4c6549c626db01b1d3f4e1444da85  ./out/Fedora-KDE-Desktop-Live-42-1.1.x86_64.iso" | sha256sum -c -
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4

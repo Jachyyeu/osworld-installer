@@ -2,165 +2,152 @@
 set -euo pipefail
 
 # ============================================================
-# bootstrap.sh — Format, mount, and install base system
+# bootstrap.sh — Format, mount, and install Fedora base system
 # Designed to be sourced by install.sh
-# Expects: EFI_PART, ROOT_PART, HOME_PART, DRY_RUN, helpers
+# Expects: EFI_PART, ROOT_PART, HOME_PART, DRY_RUN, mode, helpers
 # ============================================================
 
 source "$(dirname "${BASH_SOURCE[0]}")/logging.sh" 2>/dev/null || true
 
-# --- YAML helpers -------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALLER_DIR="$(dirname "$SCRIPT_DIR")"
-ALTOS_DIR="$(dirname "$INSTALLER_DIR")"
-ALTOS_EDITION="${ALTOS_EDITION:-home}"
-PACKAGES_YAML="${ALTOS_DIR}/packages/${ALTOS_EDITION}.yaml"
-if [[ ! -f "$PACKAGES_YAML" ]]; then
-  PACKAGES_YAML="${ALTOS_DIR}/packages/basic.yaml"
-fi
+# Track whether bind mounts were established so cleanup only unmounts what
+# this script mounted.
+_BIND_MOUNTS_ESTABLISHED=false
 
-# Extract a simple indented list from YAML (e.g. base_packages or services.enabled)
-# Usage: extract_yaml_list <file> <section_key> <indent_level>
-extract_yaml_list() {
-  local file="$1"
-  local section="$2"
-  local indent="$3"
-  awk -v section="^${section}:" -v indent="^${indent}- " '
-    $0 ~ section { in_section=1; next }
-    in_section && /^[a-zA-Z_]/ { exit }
-    in_section && $0 ~ indent { sub(/^[^-]+- /, ""); print }
-  ' "$file"
-}
-
-format_and_mount_partitions() {
-  echo ""
-  echo -e "${BLUE}[INFO] Formatting partitions...${RESET}"
-
-  run mkfs.fat -F32 "$EFI_PART"
-  run mkfs.btrfs -f "$ROOT_PART"
-  run mkfs.btrfs -f "$HOME_PART"
+mount_bind_mounts() {
+  # Bind mount host filesystems into installroot.  Must remain mounted for
+  # every chroot/dnf/dracut/grub2-mkconfig operation.
+  run mkdir -p /mnt/{proc,sys,dev,etc}
 
   echo ""
-  echo -e "${BLUE}[INFO] Mounting partitions...${RESET}"
+  echo -e "${BLUE}[INFO] Bind mounting /proc, /sys, /dev, /etc/resolv.conf...${RESET}"
 
-  run mount "$ROOT_PART" /mnt
-
-  run mkdir -p /mnt/boot/efi
-  run mount "$EFI_PART" /mnt/boot/efi
-
-  run mkdir -p /mnt/home
-  run mount "$HOME_PART" /mnt/home
-
-  echo -e "${GREEN}[OK] All partitions mounted under /mnt.${RESET}"
-}
-
-apply_app_customization() {
-  # Reads environment variables set by install.sh and adjusts the package list.
-  # Expects a single argument: name of the array variable to modify in-place.
-  local -n pkgs="$1"
-  local browser="${ALTOS_BROWSER:-brave}"
-  local email="${ALTOS_EMAIL_CLIENT:-thunderbird}"
-  local music="${ALTOS_MUSIC_PLAYER:-strawberry}"
-  local include_office="${ALTOS_INCLUDE_OFFICE:-true}"
-
-  # Browser swap
-  for i in "${!pkgs[@]}"; do
-    case "${pkgs[$i]}" in
-      firefox|google-chrome-stable|chromium|brave|librewolf)
-        unset 'pkgs[$i]'
-        ;;
-    esac
+  for d in proc sys dev; do
+    if ! mountpoint -q "/mnt/$d" 2>/dev/null; then
+      run mount --bind "/$d" "/mnt/$d"
+    fi
   done
-  pkgs+=("$browser")
 
-  # Email client
-  pkgs+=("$email")
-
-  # Music player
-  pkgs+=("$music")
-
-  # Office suite toggle
-  if [[ "$include_office" != "true" ]]; then
-    for i in "${!pkgs[@]}"; do
-      if [[ "${pkgs[$i]}" == libreoffice-fresh ]]; then
-        unset 'pkgs[$i]'
-      fi
-    done
+  if ! mountpoint -q /mnt/etc/resolv.conf 2>/dev/null; then
+    run mount --bind /etc/resolv.conf /mnt/etc/resolv.conf
   fi
+
+  _BIND_MOUNTS_ESTABLISHED=true
+}
+
+unmount_bind_mounts() {
+  if [[ "$_BIND_MOUNTS_ESTABLISHED" != true ]]; then
+    return 0
+  fi
+
+  echo ""
+  echo -e "${BLUE}[INFO] Unmounting bind mounts...${RESET}"
+  for d in proc sys dev etc/resolv.conf; do
+    run umount -l "/mnt/$d" || true
+  done
+  _BIND_MOUNTS_ESTABLISHED=false
+  echo -e "${GREEN}[OK] Bind mounts unmounted.${RESET}"
+}
+
+_cleanup_bind_mounts() {
+  unmount_bind_mounts
 }
 
 bootstrap_system() {
   echo ""
   echo -e "${BLUE}[INFO] Bootstrapping AltOS system...${RESET}"
-  echo -e "${BLUE}[INFO] This will download and install packages. Please wait.${RESET}"
+  echo -e "${BLUE}[INFO] This will download and install Fedora packages. Please wait.${RESET}"
 
-  local packages=(
-    base
-    base-devel
-    linux
-    linux-firmware
-    btrfs-progs
-    grub
-    efibootmgr
-    os-prober
-    networkmanager
-    sudo
-    nano
-    vim
-    intel-ucode
-    amd-ucode
-  )
+  local install_mode="${mode:-wipe}"
 
-  # Merge packages from packages/basic.yaml if available
-  if [[ -f "$PACKAGES_YAML" ]]; then
-    echo -e "${BLUE}[INFO] Reading additional packages from ${PACKAGES_YAML}...${RESET}"
-    local yaml_pkgs
-    yaml_pkgs=$(extract_yaml_list "$PACKAGES_YAML" "base_packages" "  ")
-    if [[ -n "$yaml_pkgs" ]]; then
-      while IFS= read -r pkg; do
-        # Skip duplicates
-        local found=0
-        for existing in "${packages[@]}"; do
-          if [[ "$existing" == "$pkg" ]]; then
-            found=1
-            break
-          fi
-        done
-        if [[ "$found" -eq 0 ]]; then
-          packages+=("$pkg")
-        fi
-      done <<< "$yaml_pkgs"
-      echo -e "${GREEN}[OK] Added packages from ${PACKAGES_YAML}.${RESET}"
-    fi
-  fi
+  # --- Format partitions --------------------------------------
+  echo ""
+  echo -e "${BLUE}[INFO] Formatting partitions...${RESET}"
 
-  # Apply per-app customization choices
-  apply_app_customization packages
+  run mkfs.btrfs -f "${ROOT_PART}"
+  run mkfs.btrfs -f "${HOME_PART}"
 
-  if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would run: pacstrap /mnt ${packages[*]}${RESET}"
+  if [[ "$install_mode" == "dualboot" ]]; then
+    echo -e "${YELLOW}[WARN] Dual-boot mode: reusing existing EFI partition.${RESET}"
+    echo -e "${BLUE}[INFO] Skipping EFI format to preserve Windows bootloader.${RESET}"
   else
-    # Pipe yes so pacman does not block on provider/confirmation prompts when
-    # stdin is not a TTY (e.g. running under systemd in the live environment).
-    # Temporarily disable pipefail because `yes` exits with SIGPIPE (141) when
-    # pacstrap closes the pipe after finishing successfully.
-    set +o pipefail
-    yes | run pacstrap /mnt "${packages[@]}"
-    local pacstrap_rc=$?
-    set -o pipefail
-    if [[ $pacstrap_rc -ne 0 && $pacstrap_rc -ne 141 ]]; then
-      echo -e "${RED}[FAIL] pacstrap failed with exit code ${pacstrap_rc}.${RESET}"
-      exit $pacstrap_rc
-    fi
+    run mkfs.fat -F32 -n ESP "${EFI_PART}"
   fi
 
+  # --- Mount target filesystems -------------------------------
+  echo ""
+  echo -e "${BLUE}[INFO] Mounting target partitions...${RESET}"
+
+  run mkdir -p /mnt
+  if ! mountpoint -q /mnt 2>/dev/null; then
+    run mount "${ROOT_PART}" /mnt
+  else
+    echo -e "${YELLOW}[WARN] /mnt already mounted; skipping root remount.${RESET}"
+  fi
+
+  run mkdir -p /mnt/boot/efi /mnt/home
+
+  if ! mountpoint -q /mnt/boot/efi 2>/dev/null; then
+    run mount "${EFI_PART}" /mnt/boot/efi
+  fi
+  if ! mountpoint -q /mnt/home 2>/dev/null; then
+    run mount "${HOME_PART}" /mnt/home
+  fi
+
+  mount_bind_mounts
+
+  # --- Install Fedora base system ---------------------------
+  echo ""
+  echo -e "${BLUE}[INFO] Installing Fedora base system with dnf...${RESET}"
+
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would run: dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \\
+        --disablerepo='*' --enablerepo=fedora --enablerepo=updates install \\
+        @core @base-x @kde-desktop-environment kernel kernel-core kernel-modules linux-firmware \\
+        grub2-efi-x64 shim-x64 grub2-tools-extra os-prober dnf NetworkManager \\
+        pipewire pipewire-pulseaudio wireplumber sddm plasma-desktop \\
+        btrfs-progs dosfstools ntfs-3g sbsigntools mokutil efibootmgr${RESET}"
+  else
+    run dnf --installroot=/mnt --releasever=42 --nogpgcheck --assumeyes \
+        --disablerepo='*' --enablerepo=fedora --enablerepo=updates \
+        install @core @base-x @kde-desktop-environment \
+            kernel kernel-core kernel-modules linux-firmware \
+            grub2-efi-x64 shim-x64 grub2-tools-extra \
+            os-prober dnf NetworkManager \
+            pipewire pipewire-pulseaudio wireplumber \
+            sddm plasma-desktop \
+            btrfs-progs dosfstools ntfs-3g \
+            sbsigntools mokutil efibootmgr
+  fi
+
+  # --- Generate /etc/fstab ----------------------------------
   echo ""
   echo -e "${BLUE}[INFO] Generating /etc/fstab...${RESET}"
-  if [[ "$DRY_RUN" == true ]]; then
-    echo -e "${BLUE}[DRY] Would run: genfstab -U /mnt >> /mnt/etc/fstab${RESET}"
+
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would write /mnt/etc/fstab with UUIDs.${RESET}"
   else
-    run genfstab -U /mnt >> /mnt/etc/fstab
-    echo -e "${GREEN}[OK] fstab generated.${RESET}"
+    local root_uuid home_uuid efi_uuid
+    root_uuid=$(blkid -s UUID -o value "${ROOT_PART}")
+    home_uuid=$(blkid -s UUID -o value "${HOME_PART}")
+    efi_uuid=$(blkid -s UUID -o value "${EFI_PART}")
+
+    cat > /mnt/etc/fstab <<EOF
+UUID=${root_uuid} /     btrfs defaults,noatime 0 0
+UUID=${home_uuid} /home btrfs defaults,noatime 0 0
+UUID=${efi_uuid}  /boot/efi vfat defaults,noatime,umask=0077 0 2
+EOF
+
+    echo -e "${GREEN}[OK] /etc/fstab written.${RESET}"
+  fi
+
+  # --- Trigger SELinux relabel on first boot ----------------
+  echo ""
+  echo -e "${BLUE}[INFO] Scheduling SELinux autorelabel on first boot...${RESET}"
+
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${BLUE}[DRY] Would touch /mnt/.autorelabel.${RESET}"
+  else
+    run touch /mnt/.autorelabel
   fi
 
   echo -e "${GREEN}[OK] Base system installed.${RESET}"

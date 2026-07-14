@@ -2,10 +2,10 @@
 
 ## Project Overview
 
-This is a **Tauri v2 + React/TypeScript** application that installs a custom Arch Linux distribution ("AltOS") onto a Windows PC. The flow is:
+This is a **Tauri v2 + React/TypeScript** application that installs a custom Fedora KDE Spin distribution ("AltOS") onto a Windows PC. The flow is:
 
 1. **Windows app** (this repo) stages files onto a spare partition
-2. **Custom Arch ISO** boots and auto-runs the installer
+2. **Fedora KDE Spin Live ISO** boots and auto-runs the installer
 3. **First-boot wizard** runs after reboot into the new system
 
 ## Build Commands
@@ -31,12 +31,13 @@ cargo build --release
 npm run tauri build
 ```
 
-### Custom Arch ISO (Linux, requires sudo)
+### Fedora KDE Spin ISO (Phase 1)
+In Phase 1, the installer uses the official Fedora 42 KDE Spin ISO. Download it using:
 ```bash
-sudo mkarchiso -v -w /tmp/archiso-tmp -o ./out archiso-profile/
+curl -L -o ./out/Fedora-KDE-Desktop-Live-42-1.1.x86_64.iso \
+  https://download.fedoraproject.org/pub/fedora/linux/releases/42/KDE/x86_64/iso/Fedora-KDE-Desktop-Live-42-1.1.x86_64.iso
 ```
-
-The output will be at `./out/altos-YYYY.MM.DD-x86_64.iso`.
+The expected SHA256 checksum is `cf4beecc21ffae86d0e368797cbcc02ba7f4c6549c626db01b1d3f4e1444da85`.
 
 ## Project Structure
 
@@ -45,18 +46,17 @@ The output will be at `./out/altos-YYYY.MM.DD-x86_64.iso`.
 | `src/` | React frontend (TypeScript + Tailwind) |
 | `src-tauri/src/main.rs` | Rust backend (Windows-only platform logic) |
 | `src-tauri/tauri.conf.json` | Tauri configuration |
-| `scripts/installer/` | Bash installer engine (runs inside Arch Live ISO) |
+| `scripts/installer/` | Bash installer engine (runs inside Fedora Live ISO) |
 | `scripts/first-boot/` | Post-install wizard (runs on first boot of installed system) |
 | `scripts/recovery/` | Recovery and rescue scripts |
 | `packages/basic.yaml` | AltOS Basic package definition and post-install scripts |
-| `archiso-profile/` | Custom archiso profile (releng + our scripts) |
 | `auto-test.ps1` | PowerShell end-to-end test runner (Windows target PC) |
 
 ## Key Conventions
 
-- **ISO paths are hardcoded** as `/arch/boot/x86_64/...` in both the Windows backend and the ISO profile. Do not change `install_dir` in `profiledef.sh` without updating the Windows code.
-- **Installer scripts must be bash** and work inside the Arch Live environment.
-- **Python is available** in the live ISO (explicitly added to `packages.x86_64`).
+- **ISO paths are hardcoded** to reference Fedora's signed shim/kernel path structure (`/images/pxeboot/...` and `/LiveOS/...`) in the staging scripts.
+- **Installer scripts must be bash** and work inside the Fedora Live environment.
+- **Python is available** in the live ISO by default.
 - **Test mode** (`VITE_TEST_MODE=true`) gates dangerous operations and enables auto-test integration.
 - **Dry-run mode** (`--dry-run`) in `install.sh` simulates all steps without touching disks.
 
@@ -64,11 +64,9 @@ The output will be at `./out/altos-YYYY.MM.DD-x86_64.iso`.
 
 1. Update version in `src-tauri/tauri.conf.json`
 2. Build and test the Windows installer on a real PC
-3. Build the custom ISO: `sudo mkarchiso -v -w /tmp/archiso-tmp -o ./out archiso-profile/`
-4. Tag and push: `git tag v0.x.y && git push origin v0.x.y`
-5. The GitHub Actions release workflow will build the Windows `.exe` and attach it to a draft release
-6. Manually upload the `.iso` to the same release
-7. Update `USE_CUSTOM_ISO` in `src-tauri/src/main.rs` to point to the release URL
+3. Tag and push: `git tag v0.x.y && git push origin v0.x.y`
+4. The GitHub Actions release workflow will build the Windows `.exe`, download/verify the Fedora KDE ISO, and attach them to a draft release.
+5. Update staging scripts or `USE_CUSTOM_ISO` variables to point to the correct release/mirror URLs.
 
 ## Testing
 

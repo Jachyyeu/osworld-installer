@@ -167,21 +167,21 @@ class AppInstallWorker(QThread):
         self.progress.emit(name, 10)
 
         # Check if already installed
-        if shutil.which(pkg) or self._pacman_qi(pkg):
+        if shutil.which(pkg) or self._rpm_q(pkg):
             self.finished.emit(name, True, "Already installed")
             return
 
         self.progress.emit(name, 30)
 
-        # Try pacman
-        if self._pacman_si(pkg):
+        # Try dnf
+        if self._dnf_info(pkg):
             self.progress.emit(name, 50)
             result = subprocess.run(
-                ["sudo", "pacman", "-S", "--noconfirm", "--needed", pkg],
+                ["sudo", "dnf", "install", "-y", pkg],
                 capture_output=True, text=True
             )
             if result.returncode == 0:
-                self.finished.emit(name, True, "Installed via pacman")
+                self.finished.emit(name, True, "Installed via dnf")
                 return
 
         self.progress.emit(name, 70)
@@ -199,12 +199,12 @@ class AppInstallWorker(QThread):
         self.finished.emit(name, False, "Could not install automatically")
 
     @staticmethod
-    def _pacman_qi(pkg):
-        return subprocess.run(["pacman", "-Qi", pkg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    def _rpm_q(pkg):
+        return subprocess.run(["rpm", "-q", pkg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
     @staticmethod
-    def _pacman_si(pkg):
-        return subprocess.run(["pacman", "-Si", pkg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    def _dnf_info(pkg):
+        return subprocess.run(["dnf", "list", pkg], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
 class ImportWorker(QThread):
