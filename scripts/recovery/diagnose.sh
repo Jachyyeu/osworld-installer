@@ -61,7 +61,7 @@ $(free -h 2>/dev/null || echo "free not available")
 $(cat /proc/cpuinfo | grep "model name" | head -n1 2>/dev/null || echo "No CPU info")
 
 --- INSTALLED PACKAGES (relevant) ---
-$(pacman -Q | grep -E "nvidia|amdgpu|mesa|linux|grub|refind|sddm|plasma" 2>/dev/null || echo "pacman not available")
+$(rpm -qa | grep -E "nvidia|amdgpu|mesa|linux|grub|refind|sddm|plasma" 2>/dev/null || echo "rpm/dnf not available")
 
 --- BOOT LOADER FILES ---
 $(ls -la /boot/ 2>/dev/null || echo "/boot not mounted")

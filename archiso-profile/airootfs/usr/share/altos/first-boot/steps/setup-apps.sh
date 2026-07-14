@@ -44,16 +44,16 @@ for item in "${apps_to_install[@]}"; do
 
   echo -e "${BLUE}[INFO] Installing $name ($pkg)...${RESET}"
 
-  # Try pacman first (official repos / AUR helper)
-  if pacman -Qi "$pkg" &>/dev/null; then
+  # Try rpm/dnf first
+  if rpm -q "$pkg" &>/dev/null; then
     echo -e "${GREEN}[OK] $name is already installed.${RESET}"
     continue
   fi
 
-  # Try with pacman (official repo)
-  if pacman -Si "$pkg" &>/dev/null; then
-    if sudo pacman -S --noconfirm --needed "$pkg" 2>/dev/null; then
-      echo -e "${GREEN}[OK] $name installed via pacman.${RESET}"
+  # Try with dnf (official repo)
+  if dnf list "$pkg" &>/dev/null; then
+    if sudo dnf install -y "$pkg" 2>/dev/null; then
+      echo -e "${GREEN}[OK] $name installed via dnf.${RESET}"
       continue
     fi
   fi

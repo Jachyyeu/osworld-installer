@@ -130,6 +130,16 @@ if [[ -n "$ESP" ]]; then
     log "${GREEN}[OK] Removed GRUB from EFI.${RESET}"
   fi
 
+  if [[ -d "$ESP_MOUNT/EFI/fedora" ]]; then
+    rm -rf "$ESP_MOUNT/EFI/fedora"
+    log "${GREEN}[OK] Removed Fedora from EFI.${RESET}"
+  fi
+
+  if [[ -d "$ESP_MOUNT/EFI/OSWORLD" ]]; then
+    rm -rf "$ESP_MOUNT/EFI/OSWORLD"
+    log "${GREEN}[OK] Removed OSWORLD from EFI.${RESET}"
+  fi
+
   umount "$ESP_MOUNT" 2>/dev/null || true
   rmdir "$ESP_MOUNT" 2>/dev/null || true
 fi

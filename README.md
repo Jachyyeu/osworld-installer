@@ -1,7 +1,7 @@
 # OSWorld Installer
 
 A modern Linux distribution installer built with **Tauri v2** and **React + TypeScript**.
-> Install a polished, macOS-style Arch Linux ecosystem in a few clicks.
+> Install a polished, macOS-style Fedora KDE Spin ecosystem in a few clicks.
 
 ## Features
 

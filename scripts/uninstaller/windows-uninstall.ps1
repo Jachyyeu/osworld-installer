@@ -81,6 +81,8 @@ if ($esp) {
 
         $refindPath = "$($avail):\EFI\refind"
         $grubPath   = "$($avail):\EFI\grub"
+        $fedoraPath = "$($avail):\EFI\fedora"
+        $osworldPath = "$($avail):\EFI\OSWORLD"
 
         if (Test-Path $refindPath) {
             Remove-Item -Recurse -Force $refindPath
@@ -89,6 +91,14 @@ if ($esp) {
         if (Test-Path $grubPath) {
             Remove-Item -Recurse -Force $grubPath
             Write-Log "Removed GRUB from EFI."
+        }
+        if (Test-Path $fedoraPath) {
+            Remove-Item -Recurse -Force $fedoraPath
+            Write-Log "Removed Fedora from EFI."
+        }
+        if (Test-Path $osworldPath) {
+            Remove-Item -Recurse -Force $osworldPath
+            Write-Log "Removed OSWORLD from EFI."
         }
 
         Remove-PartitionAccessPath -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber -AccessPath "$($avail):"
